@@ -13,8 +13,20 @@ from langgraph.prebuilt import create_react_agent
 
 
 # Tool definitions for the agent
+# Global variables to store data temporarily for tools
+GLOBAL_LYRICS_DATA = None
+GLOBAL_AUDIO_DATA = None
+
+def set_global_data(lyrics_data=None, audio_data=None):
+    """Set global data for tools to use"""
+    global GLOBAL_LYRICS_DATA, GLOBAL_AUDIO_DATA
+    if lyrics_data is not None:
+        GLOBAL_LYRICS_DATA = lyrics_data
+    if audio_data is not None:
+        GLOBAL_AUDIO_DATA = audio_data
+
 @tool
-def analyze_lyrics(lyrics_data: List[Dict[str, Any]]) -> str:
+def analyze_lyrics(lyrics_data: List[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Analyzes the lyrics to identify key themes, emotions, and moments.
     
@@ -22,13 +34,75 @@ def analyze_lyrics(lyrics_data: List[Dict[str, Any]]) -> str:
         lyrics_data: List of dictionaries containing timestamp and text for each line.
         
     Returns:
-        A summary of the analysis including themes, emotional arc, and key moments.
+        A dictionary containing the analysis including themes, emotional arc, and key segments.
     """
-    return "Analysis of lyrics complete. Found key themes and emotional moments."
+    global GLOBAL_LYRICS_DATA
+    
+    # Use global data if not provided as parameter
+    if not lyrics_data and GLOBAL_LYRICS_DATA:
+        lyrics_data = GLOBAL_LYRICS_DATA
+        
+    if not lyrics_data:
+        return {
+            "error": "No lyrics data provided",
+            "message": "Please provide lyrics data as a list of dictionaries with timestamp and text fields.",
+            "example": [
+                {"timestamp": "00:00:05", "text": "First line of lyrics"},
+                {"timestamp": "00:00:10", "text": "Second line of lyrics"}
+            ]
+        }
+    
+    # Clean the lyrics text by removing timestamp markers
+    for line in lyrics_data:
+        if "-" in line["text"]:
+            # Remove the end timestamp marker at the beginning of the text (e.g., "-00:25 ")
+            line["text"] = line["text"].split(" ", 1)[1] if " " in line["text"] else line["text"]
+    
+    # Group lyrics into meaningful segments (verses, chorus, bridge, etc.)
+    segments = []
+    current_segment = {"lines": [], "start_time": lyrics_data[0]["timestamp"], "end_time": ""}
+    segment_id = 1
+    segment_types = ["intro", "verse", "pre-chorus", "chorus", "bridge", "outro"]
+    current_segment_type_index = 0
+    
+    # Group every 4-8 lines as a segment (simplified approach)
+    for i, line in enumerate(lyrics_data):
+        current_segment["lines"].append(line)
+        
+        # Create a new segment every 4-8 lines (adjust as needed)
+        if len(current_segment["lines"]) >= 4 and (len(current_segment["lines"]) >= 8 or i == len(lyrics_data) - 1 or i % 4 == 3):
+            # Calculate segment start and end times
+            current_segment["start_time"] = current_segment["lines"][0]["timestamp"]
+            current_segment["end_time"] = current_segment["lines"][-1]["timestamp"]
+            
+            # Assign a segment type (rotating through segment_types)
+            current_segment["segment_type"] = segment_types[current_segment_type_index % len(segment_types)]
+            current_segment_type_index += 1
+            
+            # Combine all text in the segment
+            current_segment["text"] = " ".join([line["text"] for line in current_segment["lines"]])
+            current_segment["segment_id"] = segment_id
+            
+            # Add segment to the list
+            segments.append(current_segment)
+            
+            # Start a new segment
+            if i < len(lyrics_data) - 1:
+                segment_id += 1
+                current_segment = {"lines": [], "start_time": lyrics_data[i+1]["timestamp"], "end_time": ""}
+    
+    # Create a summary of the analysis
+    analysis = {
+        "segments": segments,
+        "total_segments": len(segments),
+        "summary": f"Analyzed {len(lyrics_data)} lyric lines and identified {len(segments)} segments."
+    }
+    
+    return analysis
 
 
 @tool
-def analyze_audio(audio_data: Dict[str, Any]) -> str:
+def analyze_audio(audio_data: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Analyzes the audio to identify tempo, mood, and key moments.
     
@@ -36,41 +110,96 @@ def analyze_audio(audio_data: Dict[str, Any]) -> str:
         audio_data: Dictionary containing audio metadata including duration, tempo, etc.
         
     Returns:
-        A summary of the audio analysis including mood, tempo changes, and beat markers.
+        A dictionary containing the audio analysis including mood, tempo changes, and beat markers.
     """
-    return "Audio analysis complete. Identified tempo and mood characteristics."
-
-
-@tool
-def search_stock_imagery(query: str) -> str:
-    """
-    Searches for relevant stock imagery based on the query.
+    global GLOBAL_AUDIO_DATA
     
-    Args:
-        query: Search query specifying image requirements.
+    # Use global data if not provided as parameter
+    if not audio_data and GLOBAL_AUDIO_DATA:
+        audio_data = GLOBAL_AUDIO_DATA
         
-    Returns:
-        URLs or references to relevant stock images.
-    """
-    return f"Found stock images matching query: {query}"
+    if not audio_data:
+        return {
+            "error": "No audio data provided",
+            "message": "Please provide audio data as a dictionary with duration and metadata fields.",
+            "example": {
+                "duration": 180.5,
+                "metadata": {"tempo": 120, "key": "C Major"}
+            }
+        }
+    
+    # Extract key audio metrics
+    duration = audio_data.get("duration", 0)
+    segments = audio_data.get("segments", [])
+    
+    # Identify volume peaks (simplified)
+    volume_peaks = []
+    if segments:
+        # Find segments with higher than average volume
+        volumes = [segment.get("volume_dBFS", -60) for segment in segments if "volume_dBFS" in segment]
+        if volumes:
+            avg_volume = sum(volumes) / len(volumes)
+            volume_peaks = [
+                segment for segment in segments 
+                if segment.get("volume_dBFS", -60) > avg_volume
+            ]
+    
+    # Create an analysis summary
+    analysis = {
+        "duration": duration,
+        "volume_peaks": volume_peaks,
+        "tempo": audio_data.get("metadata", {}).get("tempo", "unknown"),
+        "key": audio_data.get("metadata", {}).get("key", "unknown"),
+        "summary": f"Audio duration: {duration:.2f} seconds with {len(volume_peaks)} volume peaks identified."
+    }
+    
+    return analysis
+
+
+# Removed search_stock_imagery tool as requested - using DALL-E instead
 
 
 @tool
 def generate_image(prompt: str) -> str:
     """
-    Generates an image using AI based on the prompt.
+    Generates an image using DALL-E based on the prompt.
     
     Args:
         prompt: Detailed description of the image to generate.
         
     Returns:
-        Path or URL to the generated image.
+        URL to the generated image.
     """
-    return f"Generated image based on prompt: {prompt}"
+    from openai import OpenAI
+    import os
+    
+    # Initialize OpenAI client
+    api_key = os.getenv("API_KEY")
+    if not api_key:
+        return "Error: API_KEY environment variable not set"
+        
+    client = OpenAI(api_key=api_key)
+    
+    try:
+        # Generate image with DALL-E
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+        
+        # Get the image URL
+        image_url = response.data[0].url
+        return image_url
+        
+    except Exception as e:
+        return f"Error generating image: {str(e)}"
 
 
 @tool
-def create_scene_layout(scene_data: Dict[str, Any]) -> str:
+def create_scene_layout(scene_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Creates a visual scene layout based on the provided scene data.
     
@@ -80,22 +209,87 @@ def create_scene_layout(scene_data: Dict[str, Any]) -> str:
     Returns:
         A structured scene layout specification.
     """
-    return f"Created scene layout with {len(scene_data)} elements."
+    if not scene_data:
+        return {"error": "No scene data provided"}
+    
+    # Extract scene information
+    segment_id = scene_data.get("segment_id", 0)
+    segment_type = scene_data.get("segment_type", "verse")
+    start_time = scene_data.get("start_time", "00:00:00")
+    end_time = scene_data.get("end_time", "00:00:00")
+    text = scene_data.get("text", "")
+    image_url = scene_data.get("image_url", "")
+    
+    # Determine appropriate transitions based on segment type
+    transitions = ["fade_in"]
+    if segment_type == "chorus":
+        transitions = ["dissolve"]
+    elif segment_type == "bridge":
+        transitions = ["slide_left"]
+    
+    # Create a properly formatted scene layout
+    scene_layout = {
+        "segment_id": segment_id,
+        "start_time": start_time,
+        "end_time": end_time,
+        "segment_type": segment_type,
+        "visual_elements": [image_url] if image_url else [],
+        "transitions": transitions,
+        "text_overlay": text
+    }
+    
+    return scene_layout
 
 
 @tool
-def synchronize_visuals(visuals: List[Dict[str, Any]], lyrics: List[Dict[str, Any]]) -> str:
+def synchronize_visuals(visuals: List[Dict[str, Any]], lyrics_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Synchronizes visual elements with lyrics based on timestamps.
     
     Args:
         visuals: List of dictionaries containing visual elements and their timing.
-        lyrics: List of dictionaries containing lyrics lines and their timestamps.
+        lyrics_segments: List of dictionaries containing lyrics segments and their timestamps.
         
     Returns:
         A timeline of synchronized visual and audio elements.
     """
-    return f"Synchronized {len(visuals)} visual elements with {len(lyrics)} lyric lines."
+    if not visuals or not lyrics_segments:
+        return {"error": "Missing visuals or lyrics segments data"}
+    
+    # Create a synchronized timeline
+    timeline = {
+        "segments": [],
+        "total_duration": "00:00:00"
+    }
+    
+    # Match visuals to lyrics segments based on segment_id
+    for segment in lyrics_segments:
+        segment_id = segment.get("segment_id", 0)
+        
+        # Find matching visual for this segment
+        matching_visual = None
+        for visual in visuals:
+            if visual.get("segment_id", 0) == segment_id:
+                matching_visual = visual
+                break
+        
+        # Create a synchronized segment
+        sync_segment = {
+            "segment_id": segment_id,
+            "segment_type": segment.get("segment_type", "verse"),
+            "start_time": segment.get("start_time", "00:00:00"),
+            "end_time": segment.get("end_time", "00:00:00"),
+            "text": segment.get("text", ""),
+            "image_url": matching_visual.get("visual_elements", [""])[0] if matching_visual else ""
+        }
+        
+        timeline["segments"].append(sync_segment)
+    
+    # Set the total duration to the end time of the last segment
+    if timeline["segments"]:
+        timeline["total_duration"] = timeline["segments"][-1].get("end_time", "00:00:00")
+    
+    return timeline
 
 
 @tool
@@ -109,22 +303,17 @@ def finalize_visualization(timeline: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Complete visualization data ready for rendering.
     """
-    return {
+    if not timeline or "segments" not in timeline:
+        return {
+            "error": "Invalid timeline data",
+            "visualization_type": "none"
+        }
+    
+    # Create a properly structured visualization data object
+    visualization = {
         "visualization_type": "video",
-        "scenes": [
-            {
-                "start_time": "00:00:00",
-                "end_time": "00:00:05",
-                "visual_elements": ["intro_image.jpg"],
-                "transitions": ["fade_in"],
-                "text_overlay": "Song Title"
-            },
-            # More scenes would be generated dynamically based on actual content
-        ],
-        "audio_sync_points": [
-            {"time": "00:00:00", "event": "start"},
-            {"time": "00:00:05", "event": "first_verse"},
-        ],
+        "scenes": [],
+        "audio_sync_points": [],
         "style": {
             "color_palette": ["#3A86FF", "#FF006E", "#FB5607"],
             "typography": {"font": "Montserrat", "main_color": "#FFFFFF"},
@@ -136,6 +325,32 @@ def finalize_visualization(timeline: Dict[str, Any]) -> Dict[str, Any]:
             "version": "1.0"
         }
     }
+    
+    # Add scenes from the timeline
+    for segment in timeline.get("segments", []):
+        # Determine appropriate transitions based on segment type
+        transitions = ["fade_in"]
+        if segment.get("segment_type") == "chorus":
+            transitions = ["dissolve"]
+        elif segment.get("segment_type") == "bridge":
+            transitions = ["slide_left"]
+        
+        scene = {
+            "start_time": segment.get("start_time", "00:00:00"),
+            "end_time": segment.get("end_time", "00:00:00"),
+            "visual_elements": [segment.get("image_url", "")] if segment.get("image_url") else [],
+            "transitions": transitions,
+            "text_overlay": segment.get("text", "")
+        }
+        visualization["scenes"].append(scene)
+        
+        # Add sync point
+        visualization["audio_sync_points"].append({
+            "time": segment.get("start_time", "00:00:00"),
+            "event": f"segment_{segment.get('segment_id', 0)}"
+        })
+    
+    return visualization
 
 
 # Define input state type
@@ -161,11 +376,13 @@ def create_lyrics_visualizer_agent():
         api_key=api_key
     )
     
+    # Note: We'll set the global data in the agent_with_state function instead
+    # Don't attempt to set it here since we don't have access to the data yet
+    
     # Define the tools available to the agent
     tools = [
-        analyze_lyrics,
-        analyze_audio,
-        search_stock_imagery,
+        analyze_lyrics,  # Keep original for documentation
+        analyze_audio,   # Keep original for documentation
         generate_image,
         create_scene_layout,
         synchronize_visuals,
@@ -177,9 +394,13 @@ def create_lyrics_visualizer_agent():
         ("system", """You are a creative AI assistant specialized in creating visual representations of lyrics or transcripts.
         Your goal is to create a visually appealing and meaningful visualization that captures the essence of the provided lyrics and audio.
         
+        IMPORTANT: You already have access to the lyrics_data and audio_data in your state. DO NOT ask the user
+        to provide this data again. Instead, use the analyze_lyrics and analyze_audio tools with the data already
+        provided to you. The data is automatically passed to these tools.
+        
         Follow these steps:
-        1. Analyze the lyrics to understand the themes, emotions, and key moments
-        2. If audio data is available, analyze it to identify tempo, mood changes, and important audio cues
+        1. First, call the analyze_lyrics tool to understand the themes, emotions, and key moments
+        2. Then, call the analyze_audio tool to identify tempo, mood changes, and important audio cues
         3. Based on user requirements, decide on the most appropriate visualization approach
         4. Create a plan for visual elements that align with the lyrics and audio
         5. Generate or source appropriate visual content
@@ -200,13 +421,25 @@ def create_lyrics_visualizer_agent():
     
     # Create the ReAct agent
     # Using the API that accepts only two positional arguments
+    # We'll handle tool state injection in a custom node
     react_agent = create_react_agent(llm, tools)
     
     # Define the graph
     workflow = StateGraph(AgentState)
     
-    # Add the ReAct agent node to the graph
-    workflow.add_node("agent", react_agent)
+    # Set global data when agent is invoked
+    def agent_with_state(state):
+        # Set the global data for tools to access
+        set_global_data(
+            lyrics_data=state.get("lyrics_data"),
+            audio_data=state.get("audio_data")
+        )
+        
+        # Run the agent with state
+        return react_agent.invoke(state)
+    
+    # Add the agent node to the graph
+    workflow.add_node("agent", agent_with_state)
     
     # Set the entry point
     workflow.set_entry_point("agent")

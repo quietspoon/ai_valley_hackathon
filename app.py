@@ -1,13 +1,23 @@
 import os
 import streamlit as st
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage  # Add this import
+from langchain_core.messages import HumanMessage
 from src.agent.react_agent import create_lyrics_visualizer_agent
 from src.utils.file_processor import process_lyrics_file, process_audio_file
 from src.components.visualizer import display_visualization
 
 # Load environment variables
 load_dotenv()
+
+# Initialize session state variables if they don't exist
+if 'agent' not in st.session_state:
+    st.session_state.agent = None
+    
+if 'lyrics_data' not in st.session_state:
+    st.session_state.lyrics_data = None
+    
+if 'audio_data' not in st.session_state:
+    st.session_state.audio_data = None
 
 # Set page configuration
 st.set_page_config(
@@ -37,31 +47,29 @@ def main():
         Currently using samples from Sabrina Carpenter's "Espresso".
         """)
     
-    # Main content area
-    col1, col2 = st.columns([1, 1])
+    # Main content area - Vertical layout
+    # Input section
+    st.header("Input")
     
-    with col1:
-        st.header("Input")
-        
-        # Display info about sample files
-        st.info("Using sample files from the 'sample' directory:")
-        st.markdown("- **Lyrics**: Sabrina Carpenter - Espresso -Official Video.txt")
-        st.markdown("- **Audio**: Sabrina Carpenter - Espresso (Official Video) (128kbit_AAC).mp3")
-        
-        # User requirements input
-        st.subheader("Visualization Requirements")
-        user_requirements = st.text_area(
-            "Describe what kind of visualization you want",
-            height=150,
-            placeholder="Example: Create a nostalgic visualization with warm colors that highlights emotional moments in the lyrics. Use nature imagery for chorus sections."
-        )
-        
-        # Generate button
-        generate_button = st.button("Generate Visualization", type="primary")
-        
-    with col2:
-        st.header("Output")
-        # This section will be populated with visualization results
+    # Display info about sample files
+    st.info("Using sample files from the 'sample' directory:")
+    st.markdown("- **Lyrics**: Sabrina Carpenter - Espresso -Official Video.txt")
+    st.markdown("- **Audio**: Sabrina Carpenter - Espresso (Official Video) (128kbit_AAC).mp3")
+    
+    # User requirements input
+    st.subheader("Visualization Requirements")
+    user_requirements = st.text_area(
+        "Describe what kind of visualization you want",
+        height=150,
+        placeholder="Example: Create a nostalgic visualization with warm colors that highlights emotional moments in the lyrics. Use nature imagery for chorus sections."
+    )
+    
+    # Generate button
+    generate_button = st.button("Generate Visualization", type="primary")
+    
+    # Output section
+    st.header("Output")
+    # This section will be populated with visualization results
         
     # Process when generate button is clicked
     if generate_button:
@@ -73,24 +81,81 @@ def main():
                 audio_path = os.path.join(sample_dir, "Sabrina Carpenter - Espresso (Official Video) (128kbit_AAC).mp3")
                 
                 # Process lyrics and audio
-                lyrics_data = process_lyrics_file(lyrics_path)
-                audio_data = process_audio_file(audio_path)
+                try:
+                    # Process the files and store in session state for reuse
+                    st.session_state.lyrics_data = process_lyrics_file(lyrics_path)
+                    st.session_state.audio_data = process_audio_file(audio_path)
+                except FileNotFoundError as e:
+                    st.warning(f"Sample files not found: {str(e)}. Using minimal default data.")
+                    # Create valid minimal data structures to prevent validation errors
+                    st.session_state.lyrics_data = [
+                        {"timestamp": "00:00:05", "text": "First line of lyrics"}, 
+                        {"timestamp": "00:00:10", "text": "Second line of lyrics"}
+                    ]
+                    st.session_state.audio_data = {
+                        "duration": 60,
+                        "metadata": {"tempo": 120, "key": "C Major"}
+                    }
                 
-                # Create and run the agent
-                agent = create_lyrics_visualizer_agent()
+                # Create and store the agent in session state
+                st.session_state.agent = create_lyrics_visualizer_agent()
                 
-                # Split the agent invocation and add a shorter user request to avoid excessive recursion
-                simplified_requirements = user_requirements[:200] if user_requirements else "Create a basic visualization"
-                result = agent.invoke({
-                    "lyrics_data": lyrics_data[:10],  # Use fewer lyrics lines to reduce complexity
-                    "audio_data": audio_data,
-                    "user_requirements": simplified_requirements,
-                    "messages": [HumanMessage(content="Create a simple visualization matching these requirements.")]
-                })
+                # Ensure we have valid data by creating it regardless of validity
+                # This avoids any validation errors from the agent tools
+                lyrics_data = [
+                    {"timestamp": "00:00:05", "text": "First line of lyrics"}, 
+                    {"timestamp": "00:00:10", "text": "Second line of lyrics"}
+                ]
                 
-                # Display result in the second column
-                with col2:
-                    display_visualization(result)
+                audio_data = {
+                    "duration": 60,
+                    "metadata": {"tempo": 120, "key": "C Major"}
+                }
+                
+                # If we have valid data from file processing, use that instead
+                if st.session_state.lyrics_data and isinstance(st.session_state.lyrics_data, list) and len(st.session_state.lyrics_data) > 0:
+                    lyrics_data = st.session_state.lyrics_data
+                else:
+                    st.warning("Using default lyrics data for visualization.")
+                    
+                if st.session_state.audio_data and isinstance(st.session_state.audio_data, dict) and "duration" in st.session_state.audio_data:
+                    audio_data = st.session_state.audio_data
+                else:
+                    st.warning("Using default audio data for visualization.")
+                
+                # Store the validated data in session state
+                st.session_state.lyrics_data = lyrics_data
+                st.session_state.audio_data = audio_data
+                
+                try:
+                    # Format a more detailed initial message
+                    initial_message = f"""Create a detailed visualization that captures the essence of the lyrics and audio. 
+                    
+                    I've already loaded the lyrics data with {len(lyrics_data)} lines and audio data with duration {audio_data.get('duration', 'unknown')} seconds.
+                    
+                    My requirements for the visualization are: {user_requirements if user_requirements else 'Create something visually appealing that matches the mood of the song.'}
+                    
+                    Please use the analyze_lyrics and analyze_audio tools with the data I've provided."""
+                    
+                    # Use the guaranteed valid data to invoke the agent
+                    result = st.session_state.agent.invoke({
+                        "lyrics_data": lyrics_data,
+                        "audio_data": audio_data,
+                        "user_requirements": user_requirements,
+                        "messages": [HumanMessage(content=initial_message)]
+                    })
+                except Exception as e:
+                    st.error(f"Agent encountered an error: {str(e)}")
+                    # Create minimal result to prevent further errors
+                    result = {
+                        "visualization_type": "error",
+                        "message": f"Failed to generate visualization: {str(e)}",
+                        "scenes": [],
+                        "style": {"color_palette": ["#FF0000", "#880000"], "typography": {"font": "Arial"}}
+                    }
+                
+                # Display result in the output section
+                display_visualization(result)
                     
         except Exception as e:
             error_msg = str(e)

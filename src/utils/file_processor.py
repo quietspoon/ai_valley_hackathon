@@ -78,25 +78,49 @@ def process_lyrics_file(file_path: str) -> List[Dict[str, Any]]:
             if not line:
                 continue
                 
-            # Try various timestamp formats
-            timestamp_match = re.match(r'^\[?(\d{1,2}:\d{2}(:\d{2})?(\.\d+)?)\]?\s*(.*)', line)
+            # Try various timestamp formats including start-end format
+            # Check for format with both start and end timestamps: "00:00-00:25 Text"
+            start_end_match = re.match(r'^\[?(\d{1,2}:\d{2}(:\d{2})?(\.\d+)?)\]?\s*-\s*\[?(\d{1,2}:\d{2}(:\d{2})?(\.\d+)?)\]?\s*(.*)', line)
             
-            if timestamp_match:
-                timestamp, _, _, text = timestamp_match.groups()
+            if start_end_match:
+                start_timestamp, _, _, end_timestamp, _, _, text = start_end_match.groups()
                 lyrics_data.append({
-                    "timestamp": timestamp,
+                    "timestamp": start_timestamp,
+                    "end_timestamp": end_timestamp,
                     "text": text.strip()
                 })
             else:
-                # If no timestamp, append to previous entry or create a new one
-                if lyrics_data:
-                    lyrics_data[-1]["text"] += f" {line}"
+                # Check for standard single timestamp format
+                timestamp_match = re.match(r'^\[?(\d{1,2}:\d{2}(:\d{2})?(\.\d+)?)\]?\s*(.*)', line)
+                
+                if timestamp_match:
+                    timestamp, _, _, text = timestamp_match.groups()
+                    
+                    # Check if the text field contains an end timestamp at the beginning
+                    end_time_match = re.match(r'^-\s*\[?(\d{1,2}:\d{2}(:\d{2})?(\.\d+)?)\]?\s*(.*)', text)
+                    
+                    if end_time_match:
+                        end_timestamp, _, _, actual_text = end_time_match.groups()
+                        lyrics_data.append({
+                            "timestamp": timestamp,
+                            "end_timestamp": end_timestamp,
+                            "text": actual_text.strip()
+                        })
+                    else:
+                        lyrics_data.append({
+                            "timestamp": timestamp,
+                            "text": text.strip()
+                        })
                 else:
-                    # For the first line without timestamp, create entry with 0:00
-                    lyrics_data.append({
-                        "timestamp": "00:00",
-                        "text": line
-                    })
+                    # If no timestamp, append to previous entry or create a new one
+                    if lyrics_data:
+                        lyrics_data[-1]["text"] += f" {line}"
+                    else:
+                        # For the first line without timestamp, create entry with 0:00
+                        lyrics_data.append({
+                            "timestamp": "00:00",
+                            "text": line
+                        })
     
     # Convert timestamp strings to seconds for easier processing
     for item in lyrics_data:
@@ -201,12 +225,17 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) > 1:
-        test_file = sys.argv[1]
-        print(f"Processing file: {test_file}")
-        
-        if os.path.splitext(test_file)[1].lower() in ['.mp3', '.wav', '.ogg']:
-            result = process_audio_file(test_file)
+        file_path = sys.argv[1]
+        if os.path.exists(file_path):
+            # Process file based on extension
+            if file_path.lower().endswith(('.mp3', '.wav', '.ogg', '.flac')):
+                result = process_audio_file(file_path)
+            else:
+                result = process_lyrics_file(file_path)
+                
+            # Print results
+            print(json.dumps(result, indent=2))
         else:
-            result = process_lyrics_file(test_file)
-            
-        print(json.dumps(result, indent=2))
+            print(f"File not found: {file_path}")
+    else:
+        print("Usage: python file_processor.py <file_path>")
