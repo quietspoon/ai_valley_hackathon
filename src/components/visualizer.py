@@ -5,6 +5,30 @@ from typing import Dict, Any, List
 import tempfile
 import base64
 from difflib import SequenceMatcher
+import numpy as np
+# For MoviePy 2.1.2, need to import classes from their respective modules
+from moviepy.audio.io.AudioFileClip import AudioFileClip
+from moviepy.video.io.VideoFileClip import VideoFileClip
+from moviepy.video.VideoClip import ImageClip, ColorClip, TextClip
+from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+
+# Define custom fx functions for video effects
+# In MoviePy 2.1.2, these effects are methods on the clip objects directly
+def fadein(clip, duration):
+    # Apply crossfadein effect manually
+    return clip.crossfadein(duration)
+    
+def fadeout(clip, duration):
+    # Apply crossfadeout effect manually
+    return clip.crossfadeout(duration)
+    
+def resize(clip, width=None, height=None):
+    return clip.resize(width=width, height=height)
+import requests
+from io import BytesIO
+from PIL import Image
+import time
+import re
 
 
 def display_visualization(visualization_data: Dict[str, Any]) -> None:
@@ -183,23 +207,94 @@ def display_visualization(visualization_data: Dict[str, Any]) -> None:
         st.subheader("Preview")
         st.warning("This is a conceptual preview. The actual rendered video would incorporate all elements described above.")
         
-        # Create a simple preview placeholder
-        preview_html = f"""
-        <div style="width: 100%; height: 300px; background: linear-gradient(to right, {style['color_palette'][0]}, {style['color_palette'][-1]}); 
-                    display: flex; align-items: center; justify-content: center; border-radius: 10px;">
-            <div style="text-align: center; color: white; padding: 20px;">
-                <h3 style="color: white;">Lyrics Visualization</h3>
-                <p style="color: white;">Format: {visualization_data.get('output_format', 'mp4')}</p>
-                <p style="color: white;">Duration: {visualization_data['scenes'][-1].get('end_time', '00:00:00')}</p>
-                <p style="color: white;">{len(visualization_data['scenes'])} scenes</p>
+        # Check if 'scenes' exists in visualization_data
+        if 'scenes' in visualization_data and visualization_data['scenes']:
+            # Create a simple preview placeholder
+            scenes = visualization_data['scenes']
+            preview_html = f"""
+            <div style="width: 100%; height: 300px; background: linear-gradient(to right, {style['color_palette'][0]}, {style['color_palette'][-1]}); 
+                        display: flex; align-items: center; justify-content: center; border-radius: 10px;">
+                <div style="text-align: center; color: white; padding: 20px;">
+                    <h3 style="color: white;">Lyrics Visualization</h3>
+                    <p style="color: white;">Format: {visualization_data.get('output_format', 'mp4')}</p>
+                    <p style="color: white;">Duration: {scenes[-1].get('end_time', '00:00:00')}</p>
+                    <p style="color: white;">{len(scenes)} scenes</p>
+                </div>
             </div>
-        </div>
-        """
+            """
+        else:
+            # Create a placeholder when no scenes are available
+            preview_html = f"""
+            <div style="width: 100%; height: 300px; background: linear-gradient(to right, {style['color_palette'][0]}, {style['color_palette'][-1]}); 
+                        display: flex; align-items: center; justify-content: center; border-radius: 10px;">
+                <div style="text-align: center; color: white; padding: 20px;">
+                    <h3 style="color: white;">Lyrics Visualization</h3>
+                    <p style="color: white;">Format: {visualization_data.get('output_format', 'mp4')}</p>
+                    <p style="color: white;">Duration: 00:00:00</p>
+                    <p style="color: white;">No scenes available</p>
+                </div>
+            </div>
+            """
         st.markdown(preview_html, unsafe_allow_html=True)
         
-        # Provide download option (this would be a real file in the full implementation)
-        st.subheader("Export")
-        st.info("In a complete implementation, this would allow downloading the generated video file.")
+        # Provide options to generate and download the video
+        st.subheader("Generate Music Video")
+        
+        # Check if we already have a generated video in session state
+        if 'video_result' not in st.session_state:
+            st.session_state.video_result = None
+
+        # Create a form for audio file upload
+        with st.form("video_generation_form"):
+            st.write("Upload audio file for the music video:")
+            audio_file = st.file_uploader("Upload MP3 or WAV file", type=["mp3", "wav"])
+            generate_button = st.form_submit_button("Generate Music Video")
+
+            if generate_button and audio_file is not None:
+                # Save the uploaded audio file to a temporary location
+                temp_dir = tempfile.mkdtemp()
+                audio_path = os.path.join(temp_dir, audio_file.name)
+                with open(audio_path, 'wb') as f:
+                    f.write(audio_file.getbuffer())
+                
+                # Show spinner while processing
+                with st.spinner("Generating music video, please wait..."):
+                    # Import the stitch_music_video function from this module to avoid circular imports
+                    # Call the video stitching function
+                    from src.components.visualizer import stitch_music_video as sm
+                    result = sm(extracted_data, audio_path)
+                    st.session_state.video_result = result
+
+        # Display generated video if available
+        if st.session_state.video_result:
+            result = st.session_state.video_result
+            
+            if result.get("success", False):
+                output_file = result.get("output_file", "")
+                if os.path.exists(output_file):
+                    st.success("Music video generated successfully!")
+                    
+                    # Display video
+                    st.video(output_file)
+                    
+                    # Provide download link
+                    st.markdown(get_file_download_link(output_file, "Download Music Video"), unsafe_allow_html=True)
+                    
+                    # Show metadata
+                    st.json({
+                        "duration": result.get("duration", 0),
+                        "resolution": result.get("resolution", ""),
+                        "scenes_count": result.get("scenes_count", 0),
+                        "created_at": result.get("created_at", "")
+                    })
+                else:
+                    st.error(f"Generated file not found: {output_file}")
+            else:
+                st.error(f"Failed to generate video: {result.get('error', 'Unknown error')}")
+                if 'scenes' in result:
+                    st.warning("Visualization data was parsed correctly, but video generation failed.")
+        else:
+            st.info("Upload an audio file and click 'Generate Music Video' to create a complete music video with the visualizations.")
         
         # Display scenes in an expander
         with st.expander("Scene Details", expanded=True):
@@ -255,6 +350,334 @@ def get_file_download_link(file_path, link_text="Download File"):
     mime_type = "application/octet-stream"
     href = f'<a href="data:{mime_type};base64,{b64}" download="{file_name}">{link_text}</a>'
     return href
+
+
+def download_file(url, local_path=None):
+    """
+    Downloads a file from a URL to a local path or returns bytes.
+    
+    Args:
+        url: URL of the file to download
+        local_path: Optional path to save the file locally
+        
+    Returns:
+        Path to downloaded file if local_path provided, else file bytes
+    """
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        if local_path:
+            with open(local_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            return local_path
+        else:
+            return BytesIO(response.content)
+    except Exception as e:
+        print(f"Error downloading file from {url}: {e}")
+        return None
+
+
+def time_to_seconds(time_str):
+    """Convert time string (HH:MM:SS) to seconds."""
+    if not time_str:
+        return 0
+        
+    # Check if it's already in seconds (float or int)
+    if isinstance(time_str, (int, float)):
+        return time_str
+        
+    # Handle time strings
+    parts = time_str.split(':')
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+        return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    elif len(parts) == 2:
+        minutes, seconds = parts
+        return int(minutes) * 60 + float(seconds)
+    else:
+        try:
+            return float(time_str)
+        except:
+            return 0
+
+
+def stitch_music_video(visualization_data, audio_file_path, output_file=None):
+    """
+    Creates a complete music video by stitching together visuals, audio, and synchronized lyrics.
+    
+    Args:
+        visualization_data: Dictionary containing visualization information, scenes, etc.
+        audio_file_path: Path to the audio file (MP3, WAV, etc.)
+        output_file: Optional path for output file, will use tempfile if not provided
+        
+    Returns:
+        Dictionary with output file path and metadata
+    """
+    # Create a tempfile for output if not provided
+    if not output_file:
+        temp_dir = tempfile.mkdtemp()
+        timestamp = int(time.time())
+        output_file = os.path.join(temp_dir, f"lyric_video_{timestamp}.mp4")
+    
+    try:
+        # Load audio file - using properly imported classes from MoviePy 2.1.2
+        audio = AudioFileClip(audio_file_path)
+        audio_duration = audio.duration
+        
+        # Extract scenes from visualization data - with better error handling
+        scenes = []
+        
+        if isinstance(visualization_data, dict):
+            # Direct access if scenes is at the top level
+            if "scenes" in visualization_data:
+                scenes = visualization_data["scenes"]
+            # Check if it might be in a nested structure
+            elif "data" in visualization_data and isinstance(visualization_data["data"], dict):
+                if "scenes" in visualization_data["data"]:
+                    scenes = visualization_data["data"]["scenes"]
+            # Check in messages
+            elif "messages" in visualization_data:
+                # Process messages to find scenes data
+                for msg in reversed(visualization_data["messages"]):
+                    # Handle dict-like messages
+                    if isinstance(msg, dict) and "content" in msg:
+                        try:
+                            content = msg["content"]
+                            if isinstance(content, str) and content.strip().startswith('{'):
+                                content_data = json.loads(content)
+                                if isinstance(content_data, dict) and "scenes" in content_data:
+                                    scenes = content_data["scenes"]
+                                    break
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+                    # Handle object-like messages
+                    elif hasattr(msg, "content"):
+                        try:
+                            content = msg.content
+                            if isinstance(content, str) and content.strip().startswith('{'):
+                                content_data = json.loads(content)
+                                if isinstance(content_data, dict) and "scenes" in content_data:
+                                    scenes = content_data["scenes"]
+                                    break
+                        except (json.JSONDecodeError, AttributeError):
+                            pass
+        
+        # If no scenes found, create a default scene
+        if not scenes:
+            print(f"Warning: Could not find scenes in visualization data. Creating default scene.")
+            scenes = [{
+                "start_time": 0,
+                "end_time": audio_duration,
+                "text_overlay": "No lyrics data available",
+                "visual_elements": [],
+                "transitions": []
+            }]
+        
+        # Get style information for text formatting
+        style = visualization_data.get("style", {})
+        font = style.get("typography", {}).get("font", "Arial")
+        font_color = style.get("typography", {}).get("main_color", "white")
+        
+        # Prepare video clips for each scene
+        video_clips = []
+        
+        # Create temporary directory for downloaded files
+        temp_dir = tempfile.mkdtemp()
+        
+        # Set default video size and background color
+        video_width, video_height = 1280, 720
+        bg_color = [0, 0, 0]  # Default black background
+        
+        # Track the current time position
+        current_position = 0
+        
+        for i, scene in enumerate(scenes):
+            # Get scene timing
+            start_time = time_to_seconds(scene.get("start_time", current_position))
+            end_time = time_to_seconds(scene.get("end_time", min(start_time + 10, audio_duration)))
+            duration = end_time - start_time
+            
+            if duration <= 0:
+                continue  # Skip invalid scenes
+            
+            # Update current position for next scene
+            current_position = end_time
+            
+            # Get visual elements
+            visual_elements = scene.get("visual_elements", [])
+            
+            # Text overlay (lyrics)
+            text_overlay = scene.get("text_overlay", "")
+            
+            # Create base clip (either from visual elements or a color background)
+            if visual_elements:
+                element_clips = []
+                
+                for element in visual_elements:
+                    # Handle different types of visual elements
+                    if isinstance(element, str):
+                        # Check if it's a URL, local file, or just a placeholder
+                        if element.startswith("http"):
+                            # Download from URL
+                            local_path = os.path.join(temp_dir, f"element_{i}_{len(element_clips)}.jpg")
+                            download_file(element, local_path)
+                            
+                            # Create clip based on file type
+                            if any(element.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.gif']):
+                                clip = VideoFileClip(local_path)
+                                clip = clip.set_position("center")
+                            else:
+                                clip = ImageClip(local_path)
+                                clip = clip.set_duration(duration).set_position("center")
+                                
+                            # Resize to fit video dimensions
+                            clip = clip.resize(height=video_height)
+                            element_clips.append(clip)
+                        elif os.path.exists(element):
+                            # Local file
+                            if any(element.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.gif']):
+                                clip = VideoFileClip(element)
+                                clip = clip.set_position("center")
+                            else:
+                                clip = ImageClip(element)
+                                clip = clip.set_duration(duration).set_position("center")
+                                
+                            # Resize to fit video dimensions
+                            clip = clip.resize(height=video_height)
+                            element_clips.append(clip)
+                        else:
+                            # Placeholder - create a colored background with text
+                            color_id = i % len(style.get("color_palette", ["#000000"]))
+                            color_hex = style.get("color_palette", ["#000000"])[color_id]
+                            color = hex_to_rgb(color_hex)
+                            
+                            base_clip = ColorClip(size=(video_width, video_height), color=color)
+                            base_clip = base_clip.set_duration(duration)
+                            element_clips.append(base_clip)
+                
+                # Composite visual elements if multiple exist
+                if element_clips:
+                    if len(element_clips) == 1:
+                        base_clip = element_clips[0]
+                    else:
+                        base_clip = CompositeVideoClip(element_clips, size=(video_width, video_height))
+                else:
+                    # Fallback to colored background
+                    color_id = i % len(style.get("color_palette", ["#000000"]))
+                    color_hex = style.get("color_palette", ["#000000"])[color_id]
+                    color = hex_to_rgb(color_hex)
+                    
+                    base_clip = ColorClip(size=(video_width, video_height), color=color)
+                    base_clip = base_clip.set_duration(duration)
+            else:
+                # Create colored background
+                color_id = i % len(style.get("color_palette", ["#000000"]))
+                color_hex = style.get("color_palette", ["#000000"])[color_id]
+                color = hex_to_rgb(color_hex)
+                
+                base_clip = ColorClip(size=(video_width, video_height), color=color)
+                base_clip = base_clip.set_duration(duration)
+            
+            # Ensure the duration is set for the base clip
+            base_clip = base_clip.set_duration(duration)
+            
+            # Add text overlay (lyrics)
+            if text_overlay:
+                # Create text clip with styling
+                text_clip = TextClip(
+                    text_overlay,
+                    font=font,
+                    fontsize=40,
+                    color=font_color,
+                    bg_color="transparent",
+                    stroke_color="black",
+                    stroke_width=1.5
+                )
+                text_clip = text_clip.set_position(("center", "bottom")).set_duration(duration)
+                
+                # Composite base and text clips
+                scene_clip = CompositeVideoClip([base_clip, text_clip], size=(video_width, video_height))
+            else:
+                scene_clip = base_clip
+            
+            # Apply transitions if specified
+            transitions = scene.get("transitions", [])
+            
+            if transitions and transitions[0] == "fade_in":
+                # Direct application of crossfadein
+                fade_duration = min(1.0, duration / 3)
+                try:
+                    scene_clip = scene_clip.crossfadein(fade_duration)
+                except Exception as e:
+                    print(f"Warning: Could not apply fade_in transition: {e}")
+            
+            if "fade_out" in transitions:
+                # Direct application of crossfadeout
+                fade_duration = min(1.0, duration / 3)
+                try:
+                    scene_clip = scene_clip.crossfadeout(fade_duration)
+                except Exception as e:
+                    print(f"Warning: Could not apply fade_out transition: {e}")
+            
+            # Set the clip to start at the appropriate time
+            scene_clip = scene_clip.set_start(start_time)
+            
+            # Add to the list of video clips
+            video_clips.append(scene_clip)
+        
+        # Combine all clips
+        if not video_clips:
+            # Default clip if no scenes were successfully processed
+            default_clip = ColorClip(size=(video_width, video_height), color=(0, 0, 0))
+            default_clip = default_clip.set_duration(audio_duration)
+            video_clips.append(default_clip)
+        
+        # Create the final video by compositing all clips
+        final_video = CompositeVideoClip(video_clips, size=(video_width, video_height))
+        
+        # Set the audio track
+        final_video = final_video.set_audio(audio)
+        
+        # Ensure video duration matches audio duration
+        final_video = final_video.set_duration(audio_duration)
+        
+        # Write the output file
+        final_video.write_videofile(
+            output_file,
+            codec="libx264",
+            audio_codec="aac",
+            temp_audiofile=f"{output_file}.temp-audio.m4a",
+            remove_temp=True,
+            fps=24
+        )
+        
+        return {
+            "success": True,
+            "output_file": output_file,
+            "duration": audio_duration,
+            "resolution": f"{video_width}x{video_height}",
+            "scenes_count": len(scenes),
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        }
+        
+    except Exception as e:
+        error_message = str(e)
+        print(f"Error creating video: {error_message}")
+        return {
+            "success": False,
+            "error": error_message,
+            "scenes": visualization_data.get("scenes", [])
+        }
+
+
+def hex_to_rgb(hex_color):
+    """Convert hex color string to RGB tuple."""
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 3:
+        hex_color = ''.join([c*2 for c in hex_color])
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
 
 
 def create_demo_visualization() -> Dict[str, Any]:

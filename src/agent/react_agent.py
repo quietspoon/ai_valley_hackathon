@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Any, Literal, TypedDict, Union, Annotated
 from datetime import datetime
 import json
+import tempfile
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage
@@ -162,6 +163,7 @@ def analyze_audio(audio_data: Dict[str, Any] = None) -> Dict[str, Any]:
 # 3. create_scene_layout - create the initial scene layout based on analysis
 # 4. synchronize_visuals - synchronize the visuals with lyrics and scene layout
 # 5. finalize_visualization - finalize the visualization with the timeline from synchronize_visuals
+# 6. stitch_music_video - create a complete music video with audio, visuals, and synchronized lyrics
 
 
 @tool
@@ -589,6 +591,56 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         })
     
     return visualization
+
+
+@tool
+def stitch_music_video(visualization_data: Dict[str, Any] = None, audio_file_path: str = None) -> Dict[str, Any]:
+    """
+    Creates a complete music video by stitching together visuals, audio, and synchronized lyrics.
+    
+    Args:
+        visualization_data: Dictionary containing visualization data (scenes, styles, etc.)
+        audio_file_path: Path to the audio file (MP3, WAV, etc.) to use for the video
+        
+    Returns:
+        Dictionary with output file path and metadata
+    """
+    # Import the stitch_music_video function from the visualizer component
+    from src.components.visualizer import stitch_music_video as stitch_video
+    
+    # Validate inputs
+    if not visualization_data:
+        return {
+            "error": "No visualization data provided",
+            "message": "Please provide visualization data with scenes.",
+            "example": {
+                "scenes": [
+                    {
+                        "start_time": "00:00:00",
+                        "end_time": "00:00:05",
+                        "visual_elements": ["url_or_path_to_image.jpg"],
+                        "text_overlay": "Lyrics for this segment"
+                    }
+                ]
+            }
+        }
+    
+    if not audio_file_path or not os.path.exists(audio_file_path):
+        return {
+            "error": "Invalid audio file path",
+            "message": "Please provide a valid path to an audio file."
+        }
+    
+    # Create a temporary output file path
+    temp_dir = tempfile.mkdtemp()
+    timestamp = int(datetime.now().timestamp())
+    output_file = os.path.join(temp_dir, f"lyrics_video_{timestamp}.mp4")
+    
+    # Call the stitch_music_video function
+    result = stitch_video(visualization_data, audio_file_path, output_file)
+    
+    # Return the result
+    return result
 
 
 # Define input state type
