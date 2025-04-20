@@ -648,7 +648,7 @@ def stitch_music_video(visualization_data, audio_file_path, output_file=None):
             output_file,
             codec="libx264",
             audio_codec="aac",
-            temp_audiofile=f"{output_file}.temp-audio.m4a",
+            temp_audiofile=f"{output_file}.temp-audio.mp3",
             remove_temp=True,
             fps=24
         )

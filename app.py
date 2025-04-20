@@ -57,7 +57,7 @@ def main():
     # Display info about sample files
     st.info("Using sample files from the 'sample' directory:")
     st.markdown("- **Lyrics**: Her Majesty (Remastered 2009) (128kbit_AAC).txt")
-    st.markdown("- **Audio**: Her Majesty (Remastered 2009) (128kbit_AAC).m4a")
+    st.markdown("- **Audio**: Her Majesty (Remastered 2009) (128kbit_AAC).mp3")
     
     # User requirements input
     st.subheader("Visualization Requirements")
@@ -81,7 +81,7 @@ def main():
                 # Define paths to sample files
                 sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
                 lyrics_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).txt")
-                audio_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).m4a")
+                audio_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).mp3")
                 
                 # Process lyrics and audio
                 try:
