@@ -14,6 +14,7 @@ env/
 .ENV/
 .env/
 
+
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
 
@@ -76,3 +77,4 @@ Desktop.ini
 
 # Logs
 *.log
+.env
