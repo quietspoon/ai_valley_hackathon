@@ -17,6 +17,44 @@ def display_visualization(visualization_data: Dict[str, Any]) -> None:
     if not visualization_data:
         st.error("No visualization data received from the agent.")
         return
+        
+    # Extract visualization data from agent response if needed
+    # The visualization data might be directly in the input or in a tool response
+    extracted_data = visualization_data
+    
+    # Check if the data is nested inside tool messages
+    if "messages" in visualization_data:
+        # Look for visualization data in the last few messages
+        for msg in reversed(visualization_data["messages"]):
+            if hasattr(msg, "content") and isinstance(msg.content, str):
+                try:
+                    # Try to parse JSON content from the message
+                    content_data = json.loads(msg.content) if msg.content.strip().startswith('{') else {}
+                    
+                    # Check if this contains visualization data
+                    if isinstance(content_data, dict) and "scenes" in content_data:
+                        extracted_data = content_data
+                        break
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            elif hasattr(msg, "tool_calls"):
+                # Look for the finalize_visualization tool call result
+                for tool_call in getattr(msg, "tool_calls", []):
+                    if getattr(tool_call, "name", "") == "finalize_visualization":
+                        extracted_data = visualization_data
+                        break
+    
+    # For cases where the data is in the 'tool_message' format
+    if hasattr(visualization_data.get("messages", []), "__iter__"):
+        for msg in visualization_data.get("messages", []):
+            if hasattr(msg, "name") and msg.name == "finalize_visualization" and hasattr(msg, "content"):
+                try:
+                    content_data = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
+                    if isinstance(content_data, dict) and "scenes" in content_data:
+                        extracted_data = content_data
+                        break
+                except (json.JSONDecodeError, AttributeError):
+                    pass
     
     # Create a chat-like interface for agent-user interaction
     st.subheader("Feedback & Interaction")
@@ -76,13 +114,13 @@ def display_visualization(visualization_data: Dict[str, Any]) -> None:
     st.subheader("Visualization Plan")
     
     # Check for the specific output format
-    if isinstance(visualization_data, dict) and "scenes" in visualization_data:
+    if isinstance(extracted_data, dict) and "scenes" in extracted_data:
         # Display general information about the visualization
-        st.info(f"Created a {visualization_data.get('visualization_type', 'video')} visualization with {len(visualization_data['scenes'])} scenes.")
+        st.info(f"Created a {extracted_data.get('visualization_type', 'video')} visualization with {len(extracted_data['scenes'])} scenes.")
         
         # Display style information
-        if "style" in visualization_data:
-            style = visualization_data["style"]
+        if "style" in extracted_data:
+            style = extracted_data["style"]
             st.subheader("Visual Style")
             
             # Color palette display
@@ -111,29 +149,35 @@ def display_visualization(visualization_data: Dict[str, Any]) -> None:
         st.subheader("Timeline")
         timeline_data = []
         
-        for i, scene in enumerate(visualization_data["scenes"]):
-            timeline_data.append({
-                "scene": i+1,
-                "start": scene.get("start_time", "00:00:00"),
-                "end": scene.get("end_time", "00:00:00"),
-                "elements": ", ".join(scene.get("visual_elements", [])),
-                "text": scene.get("text_overlay", "")
-            })
+        try:
+            for i, scene in enumerate(extracted_data["scenes"]):
+                timeline_data.append({
+                    "scene": i+1,
+                    "start": scene.get("start_time", "00:00:00"),
+                    "end": scene.get("end_time", "00:00:00"),
+                    "elements": ", ".join(scene.get("visual_elements", [])),
+                    "text": scene.get("text_overlay", "")
+                })
+        except KeyError as e:
+            st.error(f"An error occurred: {str(e)}")
         
         st.dataframe(timeline_data)
         
         # Scene details with expandable sections
         st.subheader("Scene Details")
-        for i, scene in enumerate(visualization_data["scenes"]):
-            with st.expander(f"Scene {i+1}: {scene.get('start_time', '00:00:00')} - {scene.get('end_time', '00:00:00')}"):
-                st.write(f"**Duration**: {scene.get('start_time', '00:00:00')} - {scene.get('end_time', '00:00:00')}")
-                st.write(f"**Text Overlay**: {scene.get('text_overlay', 'None')}")
-                st.write(f"**Transitions**: {', '.join(scene.get('transitions', ['None']))}")
-                
-                # Display visual elements
-                st.write("**Visual Elements**:")
-                for element in scene.get("visual_elements", []):
-                    st.write(f"- {element}")
+        try:
+            for i, scene in enumerate(extracted_data["scenes"]):
+                with st.expander(f"Scene {i+1}: {scene.get('start_time', '00:00:00')} - {scene.get('end_time', '00:00:00')}"):
+                    st.write(f"**Duration**: {scene.get('start_time', '00:00:00')} - {scene.get('end_time', '00:00:00')}")
+                    st.write(f"**Text Overlay**: {scene.get('text_overlay', 'None')}")
+                    st.write(f"**Transitions**: {', '.join(scene.get('transitions', ['None']))}")
+                    
+                    # Display visual elements
+                    st.write("**Visual Elements**:")
+                    for element in scene.get("visual_elements", []):
+                        st.write(f"- {element}")
+        except KeyError as e:
+            st.error(f"An error occurred in Scene Details: {str(e)}")
         
         # Display a mock preview of the visualization
         st.subheader("Preview")
@@ -157,13 +201,31 @@ def display_visualization(visualization_data: Dict[str, Any]) -> None:
         st.subheader("Export")
         st.info("In a complete implementation, this would allow downloading the generated video file.")
         
+        # Display scenes in an expander
+        with st.expander("Scene Details", expanded=True):
+            for i, scene in enumerate(extracted_data["scenes"]):
+                st.markdown(f"**Scene {i+1}:** {scene['start_time']} - {scene['end_time']}")
+                st.markdown(f"*{scene.get('text_overlay', '(No text overlay)')}*")
+                st.markdown("---")
+        
         # Output the full JSON data for debugging/development
         with st.expander("Raw Visualization Data (JSON)", expanded=False):
-            st.json(visualization_data)
+            st.json(extracted_data)
+        
+        # Always display the full trace data prominently
+        st.subheader("Agent Execution Traces")
+        st.json(visualization_data)
             
     else:
-        # Handle unexpected data formats
-        st.warning("The visualization data is not in the expected format.")
+        # Handle unexpected data formats but still show the traces
+        st.warning("The visualization data is not in the expected format. Attempting to display raw data.")
+        
+        # Display the raw data for debugging
+        with st.expander("Raw Visualization Data", expanded=False):
+            st.json(visualization_data)
+        
+        # Always show agent traces if available - display prominently for debugging
+        st.subheader("Agent Execution Traces & Debug Information")
         st.json(visualization_data)
 
 

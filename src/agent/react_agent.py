@@ -156,7 +156,12 @@ def analyze_audio(audio_data: Dict[str, Any] = None) -> Dict[str, Any]:
     return analysis
 
 
-# Removed search_stock_imagery tool as requested - using DALL-E instead
+# Tool calling sequence for visualization:
+# 1. analyze_lyrics - analyze the lyric content
+# 2. analyze_audio - analyze the audio content
+# 3. create_scene_layout - create the initial scene layout based on analysis
+# 4. synchronize_visuals - synchronize the visuals with lyrics and scene layout
+# 5. finalize_visualization - finalize the visualization with the timeline from synchronize_visuals
 
 
 @tool
@@ -251,7 +256,7 @@ def create_scene_layout(scene_data: Dict[str, Any] = None) -> Dict[str, Any]:
 
 
 @tool
-def synchronize_visuals(visuals: List[Dict[str, Any]] = None, lyrics_segments: List[Dict[str, Any]] = None, scene_layout: Dict[str, Any] = None) -> Dict[str, Any]:
+def synchronize_visuals(visuals: List[Dict[str, Any]] = None, lyrics_segments: List[Dict[str, Any]] = None, scene_layout: Union[Dict[str, Any], None] = None) -> Dict[str, Any]:
     """
     Synchronizes visual elements with lyrics based on timestamps.
     
@@ -263,6 +268,7 @@ def synchronize_visuals(visuals: List[Dict[str, Any]] = None, lyrics_segments: L
     Returns:
         A timeline of synchronized visual and audio elements.
     """
+    # Note: This function has been updated to work with the generate_image_for_segment function
     # Access global data if available when parameters are None
     global GLOBAL_LYRICS_DATA, GLOBAL_AUDIO_DATA
     
@@ -360,6 +366,24 @@ def synchronize_visuals(visuals: List[Dict[str, Any]] = None, lyrics_segments: L
         "total_duration": "00:00:00"
     }
     
+    # If we have lyrics_segments as a string, try to parse it
+    if isinstance(lyrics_segments, str):
+        try:
+            lyrics_segments = json.loads(lyrics_segments)
+        except json.JSONDecodeError:
+            # Couldn't parse it as JSON
+            lyrics_segments = []
+            
+    # Ensure we have at least one segment even if we have no data
+    if not lyrics_segments:
+        lyrics_segments = [{
+            "segment_id": 1,
+            "segment_type": "verse",
+            "start_time": "00:00:00",
+            "end_time": "00:00:30",
+            "text": "Default segment"
+        }]
+    
     # Process all lyrics segments
     for segment in lyrics_segments:
         # Check if segment is a dictionary or something else
@@ -372,6 +396,9 @@ def synchronize_visuals(visuals: List[Dict[str, Any]] = None, lyrics_segments: L
             segment_id = 0
             segment_start = "00:00:00"
             segment_end = "00:00:00"
+            # Try to convert to dict if possible
+            if hasattr(segment, "__dict__"):
+                segment = segment.__dict__
         
         # Find matching visuals for this segment based on overlapping time ranges or segment_id
         matching_visuals = []
@@ -427,7 +454,37 @@ def synchronize_visuals(visuals: List[Dict[str, Any]] = None, lyrics_segments: L
 
 
 @tool
-def finalize_visualization(timeline: Dict[str, Any]) -> Dict[str, Any]:
+def generate_image_for_segment(segment_text: str, segment_type: str = "verse") -> str:
+    """
+    Generates an appropriate image for a lyric segment based on its content and type.
+    
+    Args:
+        segment_text: The text content of the segment to visualize.
+        segment_type: The type of segment (verse, chorus, etc.)
+        
+    Returns:
+        URL to the generated image.
+    """
+    # Create an appropriate prompt based on segment content and type
+    base_prompt = f"Create a visual representation for song lyrics: '{segment_text}'"
+    
+    # Enhance prompt based on segment type
+    if segment_type == "intro":
+        prompt = f"{base_prompt} Create an establishing mood image that introduces the song's themes."
+    elif segment_type == "chorus":
+        prompt = f"{base_prompt} Create a vibrant, emotional centerpiece image that captures the heart of the song."
+    elif segment_type == "bridge":
+        prompt = f"{base_prompt} Create a transitional image showing contrast or change related to the lyrics."
+    elif segment_type == "outro":
+        prompt = f"{base_prompt} Create a concluding image that gives a sense of resolution or completion."
+    else:  # verse or default
+        prompt = f"{base_prompt} Create a narrative image that tells the story within these specific lyrics."
+        
+    # Generate the image using DALL-E
+    return generate_image(prompt)
+
+@tool
+def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Finalizes the visualization by compiling all elements into a ready-to-render format.
     
@@ -437,11 +494,44 @@ def finalize_visualization(timeline: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Complete visualization data ready for rendering.
     """
-    if not timeline or "segments" not in timeline:
-        return {
-            "error": "Invalid timeline data",
-            "visualization_type": "none"
+    global GLOBAL_LYRICS_DATA
+    
+    # Ensure we have a valid timeline object
+    if timeline is None:
+        # Try to create a default timeline based on global data
+        timeline = {"segments": [], "total_duration": "00:00:00"}
+        
+        # If we have global lyrics data, use it to populate segments
+        if GLOBAL_LYRICS_DATA:
+            if isinstance(GLOBAL_LYRICS_DATA, list):
+                # Create basic segments from the lines
+                for i, line in enumerate(GLOBAL_LYRICS_DATA):
+                    if isinstance(line, dict):
+                        segment = {
+                            "segment_id": i,
+                            "segment_type": "verse",
+                            "start_time": line.get("timestamp", "00:00:00"),
+                            "end_time": line.get("end_timestamp", "00:00:00"),
+                            "text": line.get("text", ""),
+                            "image_url": ""
+                        }
+                        timeline["segments"].append(segment)
+            elif isinstance(GLOBAL_LYRICS_DATA, dict) and "segments" in GLOBAL_LYRICS_DATA:
+                timeline["segments"] = GLOBAL_LYRICS_DATA["segments"]
+                if "total_duration" in GLOBAL_LYRICS_DATA:
+                    timeline["total_duration"] = GLOBAL_LYRICS_DATA["total_duration"]
+    if not timeline or not isinstance(timeline, dict) or "segments" not in timeline:
+        # Set a default timeline if none is provided
+        timeline = {
+            "segments": [],
+            "total_duration": "00:00:00"
         }
+        # Return an error if there are no segments
+        if not timeline.get("segments", []):
+            return {
+                "error": "Invalid timeline data",
+                "visualization_type": "none"
+            }
     
     # Create a properly structured visualization data object
     visualization = {
@@ -462,6 +552,20 @@ def finalize_visualization(timeline: Dict[str, Any]) -> Dict[str, Any]:
     
     # Add scenes from the timeline
     for segment in timeline.get("segments", []):
+        # Generate an image for this segment if no image_url is provided
+        if not segment.get("image_url") and segment.get("text"):
+            try:
+                # Use the .invoke() method instead of direct function call with keyword arguments
+                # This fixes the deprecation warning in langchain-core 0.1.47
+                segment["image_url"] = generate_image_for_segment.invoke({
+                    "segment_text": segment.get("text", ""),
+                    "segment_type": segment.get("segment_type", "verse")
+                })
+            except Exception as e:
+                print(f"Error generating image: {str(e)}")
+                # Continue without an image if generation fails
+                pass
+        
         # Determine appropriate transitions based on segment type
         transitions = ["fade_in"]
         if segment.get("segment_type") == "chorus":
@@ -556,6 +660,7 @@ def create_lyrics_visualizer_agent():
     # Create the ReAct agent
     # Using the API that accepts only two positional arguments
     # We'll handle tool state injection in a custom node
+    # Note: tools now include generate_image_for_segment to ensure image generation
     react_agent = create_react_agent(llm, tools)
     
     # Define the graph
@@ -580,6 +685,7 @@ def create_lyrics_visualizer_agent():
     
     # Modified condition to reduce the number of iterations
     # Agent will stop after fewer iterations or when it determines it has completed the task
+    # Limit to 10 iterations as mentioned in the memory to prevent recursion limit error
     workflow.add_conditional_edges(
         "agent",
         lambda state: END if len(state.get("messages", [])) > 10 or \
