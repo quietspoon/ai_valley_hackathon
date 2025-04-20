@@ -11,19 +11,45 @@ from moviepy.audio.io.AudioFileClip import AudioFileClip
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from moviepy.video.VideoClip import ImageClip, ColorClip, TextClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy import concatenate_videoclips
 
 # Define custom fx functions for video effects
 # In MoviePy 2.1.2, these effects are methods on the clip objects directly
 def fadein(clip, duration):
-    # Apply crossfadein effect manually
-    return clip.crossfadein(duration)
+    # In MoviePy 2.1.2, not all clip types have crossfadein
+    # Use the fadein effect from the fx module
+    try:
+        # First try direct method if available
+        return clip.crossfadein(duration)
+    except AttributeError:
+        # Fallback to fx approach for MoviePy 2.1.2
+        from moviepy.video.fx.FadeIn import fadein as fadein_fx
+        return fadein_fx(clip, duration)
     
 def fadeout(clip, duration):
-    # Apply crossfadeout effect manually
-    return clip.crossfadeout(duration)
+    # In MoviePy 2.1.2, not all clip types have crossfadeout
+    # Use the fadeout effect from the fx module
+    try:
+        # First try direct method if available
+        return clip.crossfadeout(duration)
+    except AttributeError:
+        # Fallback to fx approach for MoviePy 2.1.2
+        from moviepy.video.fx.FadeOut import fadeout as fadeout_fx
+        return fadeout_fx(clip, duration)
     
 def resize(clip, width=None, height=None):
-    return clip.resize(width=width, height=height)
+    # In MoviePy 2.1.2, different clip types have different resize approaches
+    from moviepy.video.VideoClip import ImageClip
+    from moviepy.video.io.VideoFileClip import VideoFileClip
+    
+    if isinstance(clip, ImageClip):
+        # For ImageClip in MoviePy 2.1.2, use the resize function from fx directy
+        # Note: In MoviePy 2.1.2, the module is capitalized as 'Resize' not 'resize'
+        from moviepy.video.fx.Resize import resize as resize_fx
+        return resize_fx(clip, width=width, height=height)
+    else:
+        # For other clip types like VideoFileClip, ColorClip, etc.
+        return clip.resize(width=width, height=height)
 import requests
 from io import BytesIO
 from PIL import Image
@@ -244,28 +270,48 @@ def display_visualization(visualization_data: Dict[str, Any]) -> None:
         if 'video_result' not in st.session_state:
             st.session_state.video_result = None
 
-        # Create a form for audio file upload
-        with st.form("video_generation_form"):
-            st.write("Upload audio file for the music video:")
-            audio_file = st.file_uploader("Upload MP3 or WAV file", type=["mp3", "wav"])
-            generate_button = st.form_submit_button("Generate Music Video")
-
-            if generate_button and audio_file is not None:
-                # Save the uploaded audio file to a temporary location
-                temp_dir = tempfile.mkdtemp()
-                audio_path = os.path.join(temp_dir, audio_file.name)
-                with open(audio_path, 'wb') as f:
-                    f.write(audio_file.getbuffer())
+        # Check if we have audio_data in session state from app.py
+        sample_audio_path = None
+        if 'audio_data' in st.session_state and isinstance(st.session_state.audio_data, dict):
+            if 'file_path' in st.session_state.audio_data:
+                sample_audio_path = st.session_state.audio_data['file_path']
+        
+        # Display visualization based on type
+        if "visualization_type" in extracted_data and extracted_data["visualization_type"] == "video":
+            st.subheader("Music Video")
+            
+            # Add button to generate video with sample audio
+            if sample_audio_path and os.path.exists(sample_audio_path):
+                st.info(f"Sample audio file is available: {os.path.basename(sample_audio_path)}")
+                if st.button("Generate Video with Sample Audio"):
+                    with st.spinner("Generating music video with sample audio, please wait..."):
+                        # Import the stitch_music_video function from this module
+                        from src.components.visualizer import stitch_music_video as sm
+                        result = sm(extracted_data, sample_audio_path)
+                        st.session_state.video_result = result
+            else:
+                st.warning("No sample audio file found in session state. Please upload an audio file below.")
                 
-                # Show spinner while processing
-                with st.spinner("Generating music video, please wait..."):
-                    # Import the stitch_music_video function from this module to avoid circular imports
-                    # Call the video stitching function
-                    from src.components.visualizer import stitch_music_video as sm
-                    result = sm(extracted_data, audio_path)
-                    st.session_state.video_result = result
-
-        # Display generated video if available
+            # Create a form for manual audio upload
+            with st.form("music_video_form"):
+                st.write("Upload audio file for the music video:")
+                audio_file = st.file_uploader("Upload MP3 or WAV file", type=["mp3", "wav"])
+                
+                generate_button = st.form_submit_button("Generate Music Video")
+                
+                if generate_button and audio_file is not None:
+                    # Save the uploaded audio file to a temporary location
+                    temp_dir = tempfile.mkdtemp()
+                    audio_path = os.path.join(temp_dir, audio_file.name)
+                    with open(audio_path, 'wb') as f:
+                        f.write(audio_file.getbuffer())
+                    
+                    # Show spinner while processing
+                    with st.spinner("Generating music video, please wait..."):
+                        # Import the stitch_music_video function
+                        from src.components.visualizer import stitch_music_video as sm
+                        result = sm(extracted_data, audio_path)
+                        st.session_state.video_result = result
         if st.session_state.video_result:
             result = st.session_state.video_result
             
@@ -364,16 +410,31 @@ def download_file(url, local_path=None):
         Path to downloaded file if local_path provided, else file bytes
     """
     try:
-        response = requests.get(url, stream=True)
+        # Ensure parent directory exists
+        if local_path and not os.path.exists(os.path.dirname(local_path)):
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            
+        response = requests.get(url, stream=True, timeout=10)  # Added timeout
         response.raise_for_status()
         
         if local_path:
             with open(local_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            return local_path
+                    if chunk:  # Filter out keep-alive chunks
+                        f.write(chunk)
+            # Verify the file was actually written and has contents
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+                return local_path
+            else:
+                print(f"Warning: Downloaded file is empty or does not exist: {local_path}")
+                return None
         else:
-            return BytesIO(response.content)
+            content = BytesIO(response.content)
+            if content.getbuffer().nbytes > 0:
+                return content
+            else:
+                print(f"Warning: Downloaded content is empty from URL: {url}")
+                return None
     except Exception as e:
         print(f"Error downloading file from {url}: {e}")
         return None
@@ -417,12 +478,19 @@ def stitch_music_video(visualization_data, audio_file_path, output_file=None):
     """
     # Create a tempfile for output if not provided
     if not output_file:
-        temp_dir = tempfile.mkdtemp()
-        timestamp = int(time.time())
-        output_file = os.path.join(temp_dir, f"lyric_video_{timestamp}.mp4")
+        try:
+            temp_dir = tempfile.mkdtemp(prefix="lyrics_visualizer_")
+            timestamp = int(time.time())
+            output_file = os.path.join(temp_dir, f"lyric_video_{timestamp}.mp4")
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        except Exception as e:
+            print(f"Error creating temporary directory: {e}")
+            # Fallback to current directory
+            output_file = os.path.abspath(f"lyric_video_{timestamp}.mp4")
     
     try:
-        # Load audio file - using properly imported classes from MoviePy 2.1.2
+        # Load audio file
         audio = AudioFileClip(audio_file_path)
         audio_duration = audio.duration
         
@@ -480,8 +548,9 @@ def stitch_music_video(visualization_data, audio_file_path, output_file=None):
         font = style.get("typography", {}).get("font", "Arial")
         font_color = style.get("typography", {}).get("main_color", "white")
         
-        # Prepare video clips for each scene
-        video_clips = []
+        # Prepare image and text clips lists
+        img_clips = []
+        txt_clips = []
         
         # Create temporary directory for downloaded files
         temp_dir = tempfile.mkdtemp()
@@ -490,165 +559,99 @@ def stitch_music_video(visualization_data, audio_file_path, output_file=None):
         video_width, video_height = 1280, 720
         bg_color = [0, 0, 0]  # Default black background
         
-        # Track the current time position
-        current_position = 0
-        
+        # Process each scene
         for i, scene in enumerate(scenes):
             # Get scene timing
-            start_time = time_to_seconds(scene.get("start_time", current_position))
+            start_time = time_to_seconds(scene.get("start_time", 0))
             end_time = time_to_seconds(scene.get("end_time", min(start_time + 10, audio_duration)))
-            duration = end_time - start_time
+            duration = max(0.1, end_time - start_time)  # Ensure positive duration
             
             if duration <= 0:
                 continue  # Skip invalid scenes
             
-            # Update current position for next scene
-            current_position = end_time
-            
             # Get visual elements
             visual_elements = scene.get("visual_elements", [])
+            image_path = None
             
-            # Text overlay (lyrics)
-            text_overlay = scene.get("text_overlay", "")
+            # Handle visual elements (use first one as the background)
+            if visual_elements and isinstance(visual_elements[0], str):
+                element = visual_elements[0]
+                
+                # Check if it's a URL, local file, or placeholder
+                if element.startswith("http"):
+                    # Download from URL
+                    local_path = os.path.join(temp_dir, f"element_{i}.jpg")
+                    try:
+                        response = requests.get(element)
+                        response.raise_for_status()
+                        with open(local_path, "wb") as f:
+                            f.write(response.content)
+                        image_path = local_path
+                    except Exception as e:
+                        print(f"Failed to download image: {e}")
+                        # Will use fallback color
+                elif os.path.exists(element):
+                    image_path = element
             
-            # Create base clip (either from visual elements or a color background)
-            if visual_elements:
-                element_clips = []
-                
-                for element in visual_elements:
-                    # Handle different types of visual elements
-                    if isinstance(element, str):
-                        # Check if it's a URL, local file, or just a placeholder
-                        if element.startswith("http"):
-                            # Download from URL
-                            local_path = os.path.join(temp_dir, f"element_{i}_{len(element_clips)}.jpg")
-                            download_file(element, local_path)
-                            
-                            # Create clip based on file type
-                            if any(element.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.gif']):
-                                clip = VideoFileClip(local_path)
-                                clip = clip.set_position("center")
-                            else:
-                                clip = ImageClip(local_path)
-                                clip = clip.set_duration(duration).set_position("center")
-                                
-                            # Resize to fit video dimensions
-                            clip = clip.resize(height=video_height)
-                            element_clips.append(clip)
-                        elif os.path.exists(element):
-                            # Local file
-                            if any(element.lower().endswith(ext) for ext in ['.mp4', '.avi', '.mov', '.gif']):
-                                clip = VideoFileClip(element)
-                                clip = clip.set_position("center")
-                            else:
-                                clip = ImageClip(element)
-                                clip = clip.set_duration(duration).set_position("center")
-                                
-                            # Resize to fit video dimensions
-                            clip = clip.resize(height=video_height)
-                            element_clips.append(clip)
-                        else:
-                            # Placeholder - create a colored background with text
-                            color_id = i % len(style.get("color_palette", ["#000000"]))
-                            color_hex = style.get("color_palette", ["#000000"])[color_id]
-                            color = hex_to_rgb(color_hex)
-                            
-                            base_clip = ColorClip(size=(video_width, video_height), color=color)
-                            base_clip = base_clip.set_duration(duration)
-                            element_clips.append(base_clip)
-                
-                # Composite visual elements if multiple exist
-                if element_clips:
-                    if len(element_clips) == 1:
-                        base_clip = element_clips[0]
-                    else:
-                        base_clip = CompositeVideoClip(element_clips, size=(video_width, video_height))
-                else:
-                    # Fallback to colored background
-                    color_id = i % len(style.get("color_palette", ["#000000"]))
-                    color_hex = style.get("color_palette", ["#000000"])[color_id]
-                    color = hex_to_rgb(color_hex)
-                    
-                    base_clip = ColorClip(size=(video_width, video_height), color=color)
-                    base_clip = base_clip.set_duration(duration)
+            # Create the image clip
+            if image_path and os.path.exists(image_path):
+                # Create an image clip
+                img_clip = ImageClip(image_path).set_duration(duration)
+                img_clips.append(img_clip)
             else:
-                # Create colored background
+                # Use a colored background if no image
                 color_id = i % len(style.get("color_palette", ["#000000"]))
                 color_hex = style.get("color_palette", ["#000000"])[color_id]
                 color = hex_to_rgb(color_hex)
-                
-                base_clip = ColorClip(size=(video_width, video_height), color=color)
-                base_clip = base_clip.set_duration(duration)
+                img_clip = ColorClip(size=(video_width, video_height), color=color, duration=duration)
+                img_clips.append(img_clip)
             
-            # Ensure the duration is set for the base clip
-            base_clip = base_clip.set_duration(duration)
-            
-            # Add text overlay (lyrics)
+            # Text overlay (lyrics)
+            text_overlay = scene.get("text_overlay", "")
             if text_overlay:
-                # Create text clip with styling
-                text_clip = TextClip(
-                    text_overlay,
-                    font=font,
-                    fontsize=40,
-                    color=font_color,
-                    bg_color="transparent",
-                    stroke_color="black",
-                    stroke_width=1.5
+                # Create a text clip
+                txt_clip = (
+                    TextClip(
+                        text_overlay,
+                        fontsize=48,
+                        color=font_color,
+                        font=font,
+                        method='caption',
+                        size=(video_width, video_height)
+                    )
+                    .set_start(start_time)
+                    .set_duration(duration)
+                    .set_position('center')
                 )
-                text_clip = text_clip.set_position(("center", "bottom")).set_duration(duration)
-                
-                # Composite base and text clips
-                scene_clip = CompositeVideoClip([base_clip, text_clip], size=(video_width, video_height))
-            else:
-                scene_clip = base_clip
-            
-            # Apply transitions if specified
-            transitions = scene.get("transitions", [])
-            
-            if transitions and transitions[0] == "fade_in":
-                # Direct application of crossfadein
-                fade_duration = min(1.0, duration / 3)
-                try:
-                    scene_clip = scene_clip.crossfadein(fade_duration)
-                except Exception as e:
-                    print(f"Warning: Could not apply fade_in transition: {e}")
-            
-            if "fade_out" in transitions:
-                # Direct application of crossfadeout
-                fade_duration = min(1.0, duration / 3)
-                try:
-                    scene_clip = scene_clip.crossfadeout(fade_duration)
-                except Exception as e:
-                    print(f"Warning: Could not apply fade_out transition: {e}")
-            
-            # Set the clip to start at the appropriate time
-            scene_clip = scene_clip.set_start(start_time)
-            
-            # Add to the list of video clips
-            video_clips.append(scene_clip)
+                txt_clips.append(txt_clip)
         
-        # Combine all clips
-        if not video_clips:
-            # Default clip if no scenes were successfully processed
-            default_clip = ColorClip(size=(video_width, video_height), color=(0, 0, 0))
-            default_clip = default_clip.set_duration(audio_duration)
-            video_clips.append(default_clip)
+        # Concatenate all image clips
+        if not img_clips:
+            # Default clip if no scenes were processed
+            img_clips = [ColorClip(size=(video_width, video_height), color=(0, 0, 0), duration=audio_duration)]
         
-        # Create the final video by compositing all clips
-        final_video = CompositeVideoClip(video_clips, size=(video_width, video_height))
+        # Step 1: Concatenate all image clips
+        image_video = concatenate_videoclips(img_clips, method="compose")
         
-        # Set the audio track
+        # Step 2: Create the final video by compositing the image video with text clips
+        final_clips = [image_video] + txt_clips
+        final_video = CompositeVideoClip(final_clips, size=(video_width, video_height))
+        
+        # Step 3: Add audio
         final_video = final_video.set_audio(audio)
         
-        # Ensure video duration matches audio duration
-        final_video = final_video.set_duration(audio_duration)
+        # Ensure the output directory exists
+        output_dir = os.path.dirname(output_file)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
         
+        print(f"Writing video to: {output_file}")
         # Write the output file
         final_video.write_videofile(
             output_file,
             codec="libx264",
             audio_codec="aac",
-            temp_audiofile=f"{output_file}.temp-audio.mp3",
+            temp_audiofile=f"{os.path.splitext(output_file)[0]}_temp_audio.mp3",
             remove_temp=True,
             fps=24
         )
@@ -665,9 +668,12 @@ def stitch_music_video(visualization_data, audio_file_path, output_file=None):
     except Exception as e:
         error_message = str(e)
         print(f"Error creating video: {error_message}")
+        import traceback
+        traceback.print_exc()  # Print full stack trace for debugging
         return {
             "success": False,
             "error": error_message,
+            "output_file": None,  # Ensure output_file is defined in error case
             "scenes": visualization_data.get("scenes", [])
         }
 

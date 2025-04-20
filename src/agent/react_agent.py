@@ -483,7 +483,8 @@ def generate_image_for_segment(segment_text: str, segment_type: str = "verse") -
         prompt = f"{base_prompt} Create a narrative image that tells the story within these specific lyrics."
         
     # Generate the image using DALL-E
-    return generate_image(prompt)
+    # Using invoke() instead of __call__ to avoid deprecation warning
+    return generate_image.invoke(prompt)
 
 @tool
 def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:

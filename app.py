@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+import time
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 from src.agent.react_agent import create_lyrics_visualizer_agent
@@ -194,8 +195,75 @@ def main():
                         "style": {"color_palette": ["#FF0000", "#880000"], "typography": {"font": "Arial"}}
                     }
                 
-                # Display result in the output section
+                # Display the visualization results first, before video creation
+                st.subheader("Step 1: Generated Visualization")
+                # Display initial visualization result without wrapping in an expander
                 display_visualization(result)
+                
+                # Generate video with progress indicators
+                try:
+                    # Get sample audio path
+                    sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
+                    audio_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).mp3")
+                    
+                    if os.path.exists(audio_path):
+                        st.subheader("Step 2: Creating Music Video")
+                        
+                        # Create progress bar
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        # Show step-by-step progress
+                        status_text.info("Preparing audio file...")
+                        progress_bar.progress(10)
+                        time.sleep(0.5)  # Brief delay for UI update
+                        
+                        status_text.info("Generating visual elements...")
+                        progress_bar.progress(30)
+                        time.sleep(0.5)  # Brief delay for UI update
+                        
+                        status_text.info("Creating scene transitions...")
+                        progress_bar.progress(50)
+                        time.sleep(0.5)  # Brief delay for UI update
+                        
+                        status_text.info("Synchronizing audio with visuals...")
+                        progress_bar.progress(70)
+                        time.sleep(0.5)  # Brief delay for UI update
+                        
+                        status_text.info("Rendering final video...")
+                        progress_bar.progress(90)
+                        
+                        # Import the stitch_music_video function
+                        from src.components.visualizer import stitch_music_video
+                        video_result = stitch_music_video(result, audio_path)
+                        
+                        # Complete progress
+                        progress_bar.progress(100)
+                        status_text.success("Video creation complete!")
+                        
+                        # Store the result in session state
+                        st.session_state.video_result = video_result
+                        
+                        # Display video result in a new section
+                        st.subheader("Step 3: Final Music Video")
+                        
+                        # Check if video was successfully created and the output file exists
+                        if video_result.get("success", False) and video_result.get("output_file") and os.path.exists(video_result["output_file"]):
+                            st.video(video_result["output_file"])
+                            
+                            # Show download link
+                        else:
+                            st.error(f"Error generating video: {video_result.get('error', 'unknown error')}")
+                        
+                        # Show download link only if file exists
+                        if video_result.get("success", False) and video_result.get("output_file") and os.path.exists(video_result["output_file"]):
+                            from src.components.visualizer import get_file_download_link
+                            st.markdown(get_file_download_link(video_result["output_file"], "Download Music Video"), unsafe_allow_html=True)
+                    else:
+                        st.warning(f"Sample audio file not found at: {audio_path}")
+                except Exception as e:
+                    status_text.error("Video creation failed")
+                    st.error(f"Error generating video: {str(e)}")
                     
         except Exception as e:
             error_msg = str(e)
