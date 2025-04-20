@@ -68,6 +68,7 @@ class MusicAgent:
             self.raw_lyrics_by_line = file.readlines()
             return
 
+
     
     def convert_to_time(self, time_string):
         # Example input: "01:39.353"
@@ -115,6 +116,7 @@ class MusicAgent:
             )
         image_url = response.data[0].url
         return image_url
+    
 
     def group_lyrics(self):
         # Mock, group each 4 lyrics into one lyrics
@@ -185,6 +187,22 @@ class MusicAgent:
         except Exception as e:
             print(f"Failed to download image: {e}")
         return image_path
+    
+    async def generate_title_image(self):
+        title_image_url = await self.generate_image_based_on_description(prompts.TITLE_IMAGE_PROMPT.format(title=self.song_name))
+        print(title_image_url)
+        # Use the serialization function for the filename
+        image_path = os.path.join(self.base_path, "title.png")
+        try:
+            response = requests.get(title_image_url)
+            response.raise_for_status()
+            with open(image_path, "wb") as f:
+                f.write(response.content)
+            self.tilte_image_path = image_path
+            print(f"Image saved to {image_path}")
+        except Exception as e:
+            print(f"Failed to download image: {e}")
+        return image_path
 
     async def generate_all_images(self):
         # Generate all images based on lyrics
@@ -231,21 +249,6 @@ class MusicAgent:
 
         # Step 3: Create text clips for each lyric line and position them at the correct time (with offset)
         # Add an empty text clip for the initial padding
-        if padding > 0:
-            empty_txt_clip = (
-                mp.TextClip(
-                    "",
-                    fontsize=48,
-                    color='white',
-                    font=r"C:\Windows\Fonts\msyh.ttc",  # Use Microsoft YaHei for Chinese support
-                    method='caption',
-                    size=image_video.size
-                )
-                .set_start(0)
-                .set_duration(padding)
-                .set_position('center')
-            )
-            txt_clips.append(empty_txt_clip)
 
         for lyric in self.lyrics_by_line:
             start = self.convert_to_time(lyric.start_time) + padding
@@ -255,6 +258,19 @@ class MusicAgent:
                 mp.TextClip(
                     lyric.lyric,
                     fontsize=48,
+                    color='black',
+                    font=r"C:\Windows\Fonts\msyh.ttc",  # Use Microsoft YaHei for Chinese support
+                    method='caption',
+                    size=image_video.size
+                )
+                .set_start(start)
+                .set_duration(duration)
+                .set_position('center')
+            )
+            txt_clip2 = (
+                mp.TextClip(
+                    lyric.lyric,
+                    fontsize=54,
                     color='white',
                     font=r"C:\Windows\Fonts\msyh.ttc",  # Use Microsoft YaHei for Chinese support
                     method='caption',
@@ -264,7 +280,9 @@ class MusicAgent:
                 .set_duration(duration)
                 .set_position('center')
             )
+            
             txt_clips.append(txt_clip)
+            txt_clips.append(txt_clip2)
 
         # Step 4: Overlay all text clips over the image video
         final_video = mp.CompositeVideoClip([image_video] + txt_clips)
@@ -277,7 +295,7 @@ class MusicAgent:
 
         # Output path
         output_path = os.path.join(self.base_path, f"{self.song_name}_mv.mp4")
-        final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
+        final_video.write_videofile(output_path, fps=15, codec="libx264", audio_codec="aac")
         print(f"Music video saved to {output_path}")
 
 
