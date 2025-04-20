@@ -240,6 +240,28 @@ def create_demo_visualization() -> Dict[str, Any]:
     }
 
 
+def print_stream(stream):
+    """
+    Prints the content of a LangGraph agent stream.
+    
+    Args:
+        stream: The stream from agent.stream() containing state dictionaries
+    """
+    for s in stream:
+        if "messages" not in s or not s["messages"]:
+            print("Empty or invalid state:", s)
+            continue
+            
+        message = s["messages"][-1]
+        if isinstance(message, tuple):
+            print(message)
+        elif hasattr(message, "pretty_print"):
+            message.pretty_print()
+        else:
+            print(f"Message type: {type(message).__name__}")
+            print(message)
+
+
 if __name__ == "__main__":
     # Test the visualization component
     demo_data = create_demo_visualization()

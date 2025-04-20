@@ -39,12 +39,15 @@ def main():
         3. Click 'Generate Visualization'
         """)
         
+        # Add debug mode toggle
+        debug_mode = st.checkbox("Debug Mode", value=False, help="Show agent's thought process")
+        
         st.header("About")
         st.markdown("""
         This app uses an AI agent to analyze lyrics and audio, 
         then creates visuals that match the mood and meaning of the content.
         
-        Currently using samples from Sabrina Carpenter's "Espresso".
+        Currently using samples from The Beatles' "Her Majesty".
         """)
     
     # Main content area - Vertical layout
@@ -53,8 +56,8 @@ def main():
     
     # Display info about sample files
     st.info("Using sample files from the 'sample' directory:")
-    st.markdown("- **Lyrics**: Sabrina Carpenter - Espresso -Official Video.txt")
-    st.markdown("- **Audio**: Sabrina Carpenter - Espresso (Official Video) (128kbit_AAC).mp3")
+    st.markdown("- **Lyrics**: Her Majesty (Remastered 2009) (128kbit_AAC).txt")
+    st.markdown("- **Audio**: Her Majesty (Remastered 2009) (128kbit_AAC).m4a")
     
     # User requirements input
     st.subheader("Visualization Requirements")
@@ -77,8 +80,8 @@ def main():
             with st.spinner("Processing files and generating visualization..."):
                 # Define paths to sample files
                 sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
-                lyrics_path = os.path.join(sample_dir, "Sabrina Carpenter - Espresso -Official Video.txt")
-                audio_path = os.path.join(sample_dir, "Sabrina Carpenter - Espresso (Official Video) (128kbit_AAC).mp3")
+                lyrics_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).txt")
+                audio_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).m4a")
                 
                 # Process lyrics and audio
                 try:
@@ -137,13 +140,50 @@ def main():
                     
                     Please use the analyze_lyrics and analyze_audio tools with the data I've provided."""
                     
-                    # Use the guaranteed valid data to invoke the agent
-                    result = st.session_state.agent.invoke({
+                    # Create the input for the agent
+                    agent_input = {
                         "lyrics_data": lyrics_data,
                         "audio_data": audio_data,
                         "user_requirements": user_requirements,
                         "messages": [HumanMessage(content=initial_message)]
-                    })
+                    }
+                    
+                    # Check if debug mode is enabled
+                    if debug_mode:
+                        from src.components.visualizer import print_stream
+                        
+                        st.subheader("Agent Thought Process")
+                        with st.expander("View agent's reasoning", expanded=True):
+                            st.write("Running agent with streaming enabled...")
+                            
+                            # Use streaming and collect outputs
+                            stream = st.session_state.agent.stream(agent_input)
+                            
+                            # Capture stream for display in Streamlit
+                            thoughts = []
+                            all_states = []
+                            
+                            # Create placeholder for real-time updates
+                            thought_placeholder = st.empty()
+                            
+                            # Process stream in real-time
+                            for i, s in enumerate(stream):
+                                all_states.append(s)
+                                if "messages" in s and s["messages"]:
+                                    message = s["messages"][-1]
+                                    if hasattr(message, "content"):
+                                        thought_content = message.content
+                                    else:
+                                        thought_content = str(message)
+                                    
+                                    thoughts.append(thought_content)
+                                    thought_placeholder.text_area(f"Step {i+1}", thought_content, height=150)
+                            
+                            # Get final result from the last state
+                            result = all_states[-1] if all_states else None
+                    else:
+                        # Use regular non-streaming invoke
+                        result = st.session_state.agent.invoke(agent_input)
                 except Exception as e:
                     st.error(f"Agent encountered an error: {str(e)}")
                     # Create minimal result to prevent further errors
