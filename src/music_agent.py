@@ -6,6 +6,7 @@ import asyncio
 import pydantic
 import prompts
 import requests
+from datetime import datetime
 
 def get_api_key():
     dotenv.load_dotenv()
@@ -127,21 +128,20 @@ class MusicAgent:
         return response.choices[0].message.parsed.image_desc
 
 
-    async def generate_image_based_on_lyrics(self, lyric):
+    async def generate_image_based_on_lyrics(self, lyric_line, image_dir = "data/image"):
+        lyric = lyric_line.lyric
         lyric_desc = await self.generate_image_description(lyric)
         lyric_image_url = await self.generate_image_based_on_description(lyric_desc)
         print(lyric_image_url)
         
         # Download the image to data/image
-        image_dir = "data/image"
-        os.makedirs(image_dir, exist_ok=True)
         image_path = os.path.join(image_dir, f"{lyric.replace(' ','_')}.png")
         try:
             response = requests.get(lyric_image_url)
             response.raise_for_status()
             with open(image_path, "wb") as f:
                 f.write(response.content)
-            lyric.image_path = image_path
+            lyric_line.image_path = image_path
             print(f"Image saved to {image_path}")
         except Exception as e:
             print(f"Failed to download image: {e}")
@@ -149,8 +149,12 @@ class MusicAgent:
 
     async def generate_all_images(self):
         # Generate all images based on lyrics
+        # Create the directory if it doesn't exist
+        image_dir = "data/image/session_" + datetime.now().strftime("%Y%m%d%H%M%S")
+        os.makedirs(image_dir, exist_ok=True)
+
         for lyric in self.lyrics_by_line:
-            await self.generate_image_based_on_lyrics(lyric.lyric)
+            await self.generate_image_based_on_lyrics(lyric,image_dir)
 
     
     async def generate_music(self, lyric):
@@ -160,8 +164,5 @@ class MusicAgent:
 if __name__ == "__main__":
     music_agent = MusicAgent()
     lyrics = music_agent.load_lyrics("./data/dazhanhongtu.txt")
-    grouped_lyrics = music_agent.group_lyrics()
-    # Convert LyricLine objects to dicts for JSON serialization
-    lyric = music_agent.lyrics_by_line[0].lyric
-    
+    grouped_lyrics = music_agent.group_lyrics()    
     asyncio.run(music_agent.generate_all_images())

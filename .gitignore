@@ -79,4 +79,4 @@ Desktop.ini
 *.log
 .env
 
-data/image/*
+src/data/image/*
