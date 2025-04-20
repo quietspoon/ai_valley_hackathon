@@ -6,7 +6,13 @@ import asyncio
 import pydantic
 import prompts
 import requests
+import moviepy.editor as mp
 from datetime import datetime
+
+from moviepy.config import change_settings
+# Configure MoviePy to use your specific ImageMagick installation
+change_settings({"IMAGEMAGICK_BINARY": r"D:\ImageMagick-7.1.1-Q16-HDRI\magick.exe"})
+
 
 def get_api_key():
     dotenv.load_dotenv()
@@ -25,29 +31,33 @@ class LyricLine:
 
     def __str__(self):
         return f"{self.lyric} ({self.start_time} - {self.end_time})"
+
     def to_dict(self):
         return {
             "lyric": self.lyric,
             "start_time": self.start_time,
-            "end_time": self.end_time
+            "end_time": self.end_time,
+            "image_path": self.image_path
         }
 
 # This agent generates MV based on the lyrics given by the user. 
 class MusicAgent:
-    def __init__(self):
+    def __init__(self, song_name):
+        self.song_name = song_name
         self.raw_lyrics_by_line = []
         self.lyrics_by_line = []
+        self.grouped_lyrics = []
         self.music = None
-
         api_key = get_api_key()
         self.client = openai.AsyncOpenAI(api_key=api_key)
+        self.base_path = f"data/{self.song_name}"
+        os.makedirs(self.base_path, exist_ok=True)
 
 
     
     def _read_file(self, file_path):
         with open(file_path, "r", encoding="utf-8") as file:
             self.raw_lyrics_by_line = file.readlines()
-            print(self.raw_lyrics_by_line)
             return
 
     
@@ -107,7 +117,7 @@ class MusicAgent:
             last_index = min(i+3, len(self.lyrics_by_line)-1)
             group = LyricLine(combined_lyric, self.lyrics_by_line[i].start_time, self.lyrics_by_line[last_index].end_time)
             grouped_lyrics.append(group)
-        self.lyrics_by_line = grouped_lyrics
+        self.grouped_lyrics = grouped_lyrics
         return grouped_lyrics
         
     async def generate_image_description(self, lyric):
@@ -126,16 +136,36 @@ class MusicAgent:
             response_format=ImageDescResponse,
         )
         return response.choices[0].message.parsed.image_desc
+    
+    def save_state(self):
+        # Save the state of the music agent
+        # Save the lyrics_by_line to a json file
+        # Save the music to a json f
+        with open(f"{self.base_path}/state.json", "w+", encoding="utf-8") as f:
+            state = {
+                "lyrics_by_line": [x.to_dict() for x in self.lyrics_by_line],
+                "grouped_lyrics": [x.to_dict() for x in self.grouped_lyrics],
+            }
+            json.dump(state, f, ensure_ascii=False)
+    
+    def load_state(self):
+        # Load the state of the music agent
+        # Load the lyrics_by_line from a json file
+        # Load the music from a json file
+        with open(f"{self.base_path}/state.json", "r",encoding="utf-8") as f:
+            state = json.load(f)
+            self.lyrics_by_line = [LyricLine(x["lyric"], x["start_time"], x["end_time"]) for x in state["lyrics_by_line"]]
+            self.grouped_lyrics = [LyricLine(x["lyric"], x["start_time"], x["end_time"]) for x in state["grouped_lyrics"]]
 
 
-    async def generate_image_based_on_lyrics(self, lyric_line, image_dir = "data/image"):
+    async def generate_image_based_on_lyrics(self, lyric_line):
         lyric = lyric_line.lyric
         lyric_desc = await self.generate_image_description(lyric)
         lyric_image_url = await self.generate_image_based_on_description(lyric_desc)
         print(lyric_image_url)
         
         # Download the image to data/image
-        image_path = os.path.join(image_dir, f"{lyric.replace(' ','_')}.png")
+        image_path = os.path.join(self.base_path, f"{lyric.replace(' ','_')}.png")
         try:
             response = requests.get(lyric_image_url)
             response.raise_for_status()
@@ -150,19 +180,76 @@ class MusicAgent:
     async def generate_all_images(self):
         # Generate all images based on lyrics
         # Create the directory if it doesn't exist
-        image_dir = "data/image/session_" + datetime.now().strftime("%Y%m%d%H%M%S")
-        os.makedirs(image_dir, exist_ok=True)
+        for lyric in self.grouped_lyrics:
+            await self.generate_image_based_on_lyrics(lyric)
+        self.save_state()
 
+    def generate_music_video(self):
+        """
+        Generate the music video based on the lyrics
+        Step One: Combine all images into a video based on grouped_lyrics
+        Step Two: Combine all texts into a video based on lyrics_by_line
+        Step Three: Overlay texts over images
+        Step Four: Optionally add music
+        """
+        img_clips = []
+        txt_clips = []
+
+        # Step 1: Create image clips for each grouped lyric
+        for lyric in self.grouped_lyrics:
+            start = self.convert_to_time(lyric.start_time)
+            end = self.convert_to_time(lyric.end_time)
+            duration = max(0.1, end - start)
+            image_path = os.path.join(self.base_path, f"{lyric.lyric.replace(' ','_')}.png")
+            img_clip = mp.ImageClip(image_path).set_duration(duration)
+            img_clips.append(img_clip)
+
+        # Step 2: Concatenate all image clips
+        image_video = mp.concatenate_videoclips(img_clips, method="compose")
+
+        # Step 3: Create text clips for each lyric line and position them at the correct time
         for lyric in self.lyrics_by_line:
-            await self.generate_image_based_on_lyrics(lyric,image_dir)
+            start = self.convert_to_time(lyric.start_time)
+            end = self.convert_to_time(lyric.end_time)
+            duration = max(0.1, end - start)
+            txt_clip = (
+                mp.TextClip(
+                    lyric.lyric,
+                    fontsize=48,
+                    color='white',
+                    font='Source Han Sans VF',
+                    method='caption',
+                    size=image_video.size
+                )
+                .set_start(start)
+                .set_duration(duration)
+                .set_position('center')
+            )
+            txt_clips.append(txt_clip)
 
-    
-    async def generate_music(self, lyric):
-        pass
+        # Step 4: Overlay all text clips over the image video
+        final_video = mp.CompositeVideoClip([image_video] + txt_clips)
+
+        # Step 5: Optionally, add music if you have a music file
+        music_path = os.path.join(self.base_path, "music.mp3")
+        if os.path.exists(music_path):
+            audio = mp.AudioFileClip(music_path)
+            final_video = final_video.set_audio(audio)
+
+        # Output path
+        output_path = os.path.join(self.base_path, f"{self.song_name}_mv.mp4")
+        final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
+        print(f"Music video saved to {output_path}")
+
 
 
 if __name__ == "__main__":
-    music_agent = MusicAgent()
-    lyrics = music_agent.load_lyrics("./data/dazhanhongtu.txt")
-    grouped_lyrics = music_agent.group_lyrics()    
-    asyncio.run(music_agent.generate_all_images())
+    # music_agent = MusicAgent("dazhanhongtu")
+    # lyrics = music_agent.load_lyrics("./data/dazhanhongtu.txt")
+    # grouped_lyrics = music_agent.group_lyrics()
+    # asyncio.run(music_agent.generate_all_images())
+
+
+    music_agent = MusicAgent("dazhanhongtu")
+    music_agent.load_state()
+    music_agent.generate_music_video()

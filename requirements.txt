@@ -2,3 +2,4 @@ openai
 manim
 dotenv
 requests
+moviepy
