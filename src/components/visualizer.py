@@ -465,16 +465,19 @@ def create_video_from_visualization(visualization_data: Dict[str, Any], transcri
                     for field in ["image_url", "visual_element", "image", "url"]:
                         if field in scene and scene[field] and isinstance(scene[field], str):
                             image_url = scene[field]
-                            st.write(f"Debug: Found image URL in field '{field}'")
+                            st.write(f"Debug: Found image URL in field '{field}': {image_url[:30]}...")
                             break
                     
                     # Also check visual_elements list if present
                     if not image_url and "visual_elements" in scene and isinstance(scene["visual_elements"], list) and len(scene["visual_elements"]) > 0:
                         for element in scene["visual_elements"]:
-                            if isinstance(element, str) and (element.startswith("http") or element.startswith("https")):
+                            if isinstance(element, str) and element and (element.startswith("http") or element.startswith("https")):
                                 image_url = element
-                                st.write("Debug: Found image URL in visual_elements list")
+                                st.write(f"Debug: Found image URL in visual_elements list: {element[:30]}...")
                                 break
+                    
+                    # Print the scene structure for debugging
+                    st.write(f"Debug scene {i}: {str(scene)[:500]}...")
                     
                     # Check if we have a valid image URL
                     if image_url and isinstance(image_url, str) and image_url.startswith("http"):

@@ -467,24 +467,50 @@ def generate_image_for_segment(segment_text: str, segment_type: str = "verse") -
     Returns:
         URL to the generated image.
     """
-    # Create an appropriate prompt based on segment content and type
-    base_prompt = f"Create a visual representation for song lyrics: '{segment_text}'"
+    # Ensure we have valid segment text
+    if not segment_text or segment_text.strip() == "":
+        segment_text = "Create a conceptual visualization for this audio segment"
     
-    # Enhance prompt based on segment type
-    if segment_type == "intro":
-        prompt = f"{base_prompt} Create an establishing mood image that introduces the song's themes."
-    elif segment_type == "chorus":
-        prompt = f"{base_prompt} Create a vibrant, emotional centerpiece image that captures the heart of the song."
-    elif segment_type == "bridge":
-        prompt = f"{base_prompt} Create a transitional image showing contrast or change related to the lyrics."
-    elif segment_type == "outro":
-        prompt = f"{base_prompt} Create a concluding image that gives a sense of resolution or completion."
-    else:  # verse or default
-        prompt = f"{base_prompt} Create a narrative image that tells the story within these specific lyrics."
+    # Check if it's a podcast/transcript or song
+    is_podcast = True
+    song_keywords = ["chorus", "verse", "bridge", "outro", "intro"]
+    if any(keyword in segment_type.lower() for keyword in song_keywords):
+        is_podcast = False
+    
+    # Create an appropriate prompt based on content type
+    if is_podcast:
+        base_prompt = f"Create a conceptual visualization for this audio transcript: '{segment_text}'"
+        prompt = f"{base_prompt} Create a conceptual image that represents the ideas and themes in this segment."
+    else:
+        # Traditional song lyrics handling
+        base_prompt = f"Create a visual representation for song lyrics: '{segment_text}'"
         
+        # Enhance prompt based on segment type
+        if segment_type == "intro":
+            prompt = f"{base_prompt} Create an establishing mood image that introduces the song's themes."
+        elif segment_type == "chorus":
+            prompt = f"{base_prompt} Create a vibrant, emotional centerpiece image that captures the heart of the song."
+        elif segment_type == "bridge":
+            prompt = f"{base_prompt} Create a transitional image showing contrast or change related to the lyrics."
+        elif segment_type == "outro":
+            prompt = f"{base_prompt} Create a concluding image that gives a sense of resolution or completion."
+        else:  # verse or default
+            prompt = f"{base_prompt} Create a narrative image that tells the story within these specific lyrics."
+    
+    # Log what we're doing - helpful for debugging
+    print(f"Generating image for segment with text: {segment_text[:50]}...")
+    print(f"Generated image with prompt: {prompt[:100]}...")
+    
     # Generate the image using DALL-E
     # Using invoke() instead of __call__ to avoid deprecation warning
-    return generate_image.invoke(prompt)
+    try:
+        image_url = generate_image.invoke(prompt)
+        print(f"Successfully generated image: {image_url[:60]}...")
+        return image_url
+    except Exception as e:
+        print(f"Error generating image: {str(e)}")
+        # Return a placeholder image URL
+        return "https://via.placeholder.com/512x512.png?text=Image+Generation+Failed"
 
 @tool
 def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -498,6 +524,7 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         Complete visualization data ready for rendering.
     """
     global GLOBAL_LYRICS_DATA
+    global GLOBAL_AUDIO_DATA
     
     # Ensure we have a valid timeline object
     if timeline is None:
@@ -553,7 +580,85 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         }
     }
     
-    # Add scenes from the timeline
+    # Split long segments into smaller pieces to ensure more frequent image generation
+    # Especially important for podcasts with fewer transcript entries
+    subdivided_segments = []
+    max_segment_duration = 15  # Maximum segment duration in seconds before subdivision
+    
+    # First, ensure all segments have text content
+    has_content = False
+    for segment in timeline.get("segments", []):
+        if segment.get("text"):
+            has_content = True
+            break
+    
+    # If no segments have text, try to get text from GLOBAL_LYRICS_DATA
+    default_text = ""
+    if not has_content and GLOBAL_LYRICS_DATA:
+        if isinstance(GLOBAL_LYRICS_DATA, list) and len(GLOBAL_LYRICS_DATA) > 0:
+            # Get text from the first lyrics data entry
+            if isinstance(GLOBAL_LYRICS_DATA[0], dict) and "text" in GLOBAL_LYRICS_DATA[0]:
+                default_text = GLOBAL_LYRICS_DATA[0]["text"]
+    
+    # Fallback text if nothing else is available
+    if not default_text:
+        default_text = "Create a conceptual visualization for this audio segment"
+    
+    for segment in timeline.get("segments", []):
+        # Ensure segment has text content
+        if not segment.get("text"):
+            segment["text"] = default_text
+            
+        # Calculate segment duration in seconds
+        start_time_sec = _timestamp_to_seconds(segment.get("start_time", "00:00:00"))
+        end_time_sec = _timestamp_to_seconds(segment.get("end_time", "00:00:00"))
+        
+        # If end_time is not specified or invalid, estimate it
+        if end_time_sec <= start_time_sec and len(timeline.get("segments", [])) > 1:
+            # Find the next segment's start time
+            segment_index = timeline.get("segments", []).index(segment)
+            if segment_index < len(timeline.get("segments", [])) - 1:
+                next_segment = timeline.get("segments", [])[segment_index + 1]
+                end_time_sec = _timestamp_to_seconds(next_segment.get("start_time", "00:00:00"))
+            else:
+                # For the last segment, estimate duration based on audio data or add 30 seconds
+                if GLOBAL_AUDIO_DATA and isinstance(GLOBAL_AUDIO_DATA, dict) and "duration" in GLOBAL_AUDIO_DATA:
+                    end_time_sec = min(start_time_sec + 30, GLOBAL_AUDIO_DATA["duration"])
+                else:
+                    end_time_sec = start_time_sec + 30
+        
+        duration = end_time_sec - start_time_sec
+        
+        # If segment is longer than max_segment_duration, split it
+        if duration > max_segment_duration:
+            num_subsegments = max(2, int(duration / max_segment_duration))
+            subsegment_duration = duration / num_subsegments
+            
+            for i in range(num_subsegments):
+                sub_start = start_time_sec + (i * subsegment_duration)
+                sub_end = sub_start + subsegment_duration
+                
+                # Create a subsegment with the same text but add subsegment info
+                segment_text = segment.get("text", default_text)
+                # Add subsegment context to make each prompt slightly different
+                subsegment_text = f"{segment_text} (part {i+1} of {num_subsegments})"
+                
+                subsegment = {
+                    "segment_id": f"{segment.get('segment_id', 0)}_sub{i}",
+                    "segment_type": segment.get("segment_type", "verse"),
+                    "start_time": _seconds_to_timestamp(sub_start),
+                    "end_time": _seconds_to_timestamp(sub_end),
+                    "text": subsegment_text,
+                    "image_url": ""
+                }
+                subdivided_segments.append(subsegment)
+        else:
+            # Keep short segments as-is
+            subdivided_segments.append(segment)
+    
+    # Replace original segments with subdivided ones
+    timeline["segments"] = subdivided_segments
+    # Add scenes from the updated timeline
     for segment in timeline.get("segments", []):
         # Generate an image for this segment if no image_url is provided
         if not segment.get("image_url") and segment.get("text"):
@@ -564,10 +669,11 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
                     "segment_text": segment.get("text", ""),
                     "segment_type": segment.get("segment_type", "verse")
                 })
+                print(f"Generated image URL: {segment['image_url'][:60]}...")
             except Exception as e:
                 print(f"Error generating image: {str(e)}")
-                # Continue without an image if generation fails
-                pass
+                # Set a fallback image URL
+                segment["image_url"] = "https://via.placeholder.com/512x512.png?text=Image+Generation+Failed"
         
         # Determine appropriate transitions based on segment type
         transitions = ["fade_in"]
@@ -576,10 +682,16 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         elif segment.get("segment_type") == "bridge":
             transitions = ["slide_left"]
         
+        # Make sure the image URL is directly in the scene object AND in visual_elements
+        # This ensures visualization.py can find it regardless of which field it checks
+        image_url = segment.get("image_url", "")
+        
         scene = {
             "start_time": segment.get("start_time", "00:00:00"),
             "end_time": segment.get("end_time", "00:00:00"),
-            "visual_elements": [segment.get("image_url", "")] if segment.get("image_url") else [],
+            "image_url": image_url,  # Add directly to the scene object
+            "image": image_url,      # Alternative field name the visualizer might check
+            "visual_elements": [image_url] if image_url else [],
             "transitions": transitions,
             "text_overlay": segment.get("text", "")
         }
@@ -592,6 +704,30 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         })
     
     return visualization
+
+
+def _timestamp_to_seconds(timestamp):
+    """Convert a timestamp in format HH:MM:SS or MM:SS to seconds."""
+    if not timestamp:
+        return 0
+        
+    parts = timestamp.split(":")
+    if len(parts) == 3:  # HH:MM:SS
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    elif len(parts) == 2:  # MM:SS
+        return int(parts[0]) * 60 + float(parts[1])
+    else:  # Try to parse as a float
+        try:
+            return float(timestamp)
+        except ValueError:
+            return 0
+
+
+def _seconds_to_timestamp(seconds):
+    """Convert seconds to a timestamp in format MM:SS."""
+    minutes = int(seconds // 60)
+    remaining_seconds = seconds % 60
+    return f"{minutes:02d}:{remaining_seconds:05.2f}"
 
 
 # Define input state type
