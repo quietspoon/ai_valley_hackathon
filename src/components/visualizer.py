@@ -239,7 +239,7 @@ def display_visualization(visualization_data: Dict[str, Any]) -> None:
         
         # Always display the full trace data prominently
         st.subheader("Agent Execution Traces")
-        #st.json(visualization_data)
+        st.json(visualization_data)
             
     else:
         # Handle unexpected data formats but still show the traces
