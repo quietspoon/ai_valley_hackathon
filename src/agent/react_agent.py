@@ -612,7 +612,7 @@ def create_lyrics_visualizer_agent():
     
     # Create the LLM
     llm = ChatOpenAI(
-        model="gpt-4o-mini", 
+        model="gpt-4o", 
         temperature=0.7, 
         api_key=api_key
     )
