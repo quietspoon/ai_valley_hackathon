@@ -22,20 +22,20 @@ if 'audio_data' not in st.session_state:
 
 # Set page configuration
 st.set_page_config(
-    page_title="Lyrics Visualizer (Sample Mode)",
+    page_title="Audio Visualizer ",
     page_icon="🎵",
     layout="wide"
 )
 
 def main():
-    st.title("🎵 Lyrics Visualizer (Sample Mode)")
-    st.subheader("Create visual experiences from sample lyrics")
+    st.title("🎵 Audio Visualizer ")
+    st.subheader("Create visual experiences from sample audio")
     
     # Sidebar with instructions
     with st.sidebar:
         st.header("How it works")
         st.markdown("""
-        1. The app automatically uses sample lyrics and audio files
+        1. The app automatically uses sample audio and audio files
         2. Enter your requirements for visualization
         3. Click 'Generate Visualization'
         """)
@@ -48,7 +48,7 @@ def main():
         This app uses an AI agent to analyze lyrics and audio, 
         then creates visuals that match the mood and meaning of the content.
         
-        Currently using samples from The Beatles' "Her Majesty".
+        Using samples from the 'sample' directory.
         """)
     
     # Main content area - Vertical layout
@@ -56,9 +56,7 @@ def main():
     st.header("Input")
     
     # Display info about sample files
-    st.info("Using sample files from the 'sample' directory:")
-    st.markdown("- **Lyrics**: Her Majesty (Remastered 2009) (128kbit_AAC).txt")
-    st.markdown("- **Audio**: Her Majesty (Remastered 2009) (128kbit_AAC).mp3")
+    st.info("Using sample files from the 'sample' directory")
     
     # User requirements input
     st.subheader("Visualization Requirements")
@@ -79,10 +77,17 @@ def main():
     if generate_button:
         try:
             with st.spinner("Processing files and generating visualization..."):
-                # Define paths to sample files
+                # Define paths to sample files using glob to handle special characters
+                import glob
                 sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
-                lyrics_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).txt")
-                audio_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).mp3")
+                
+                # Find the transcript file (first .txt file)
+                txt_files = glob.glob(os.path.join(sample_dir, "*.txt"))
+                lyrics_path = txt_files[0] if txt_files else None
+                
+                # Find the audio file (first .mp3 file)
+                mp3_files = glob.glob(os.path.join(sample_dir, "*.mp3"))
+                audio_path = mp3_files[0] if mp3_files else None
                 
                 # Process lyrics and audio
                 try:
@@ -181,9 +186,11 @@ def main():
                 st.subheader("Step 2: Creating Video")
                 with st.spinner("Creating video from visualization and audio..."): 
                     try:
-                        # Get the path to the sample audio file
+                        # Get the path to the sample audio file using glob to handle special characters
+                        import glob
                         sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
-                        audio_path = os.path.join(sample_dir, "Her Majesty (Remastered 2009) (128kbit_AAC).mp3")
+                        mp3_files = glob.glob(os.path.join(sample_dir, "*.mp3"))
+                        audio_path = mp3_files[0] if mp3_files else None
                         
                         # Check if audio file exists
                         if not os.path.exists(audio_path):
@@ -199,7 +206,7 @@ def main():
                         # Create the video file
                         video_path = create_video_from_visualization(
                             visualization_data=result,
-                            lyrics_data=lyrics_data,
+                            transcript_data=lyrics_data,
                             audio_path=audio_path
                         )
                         

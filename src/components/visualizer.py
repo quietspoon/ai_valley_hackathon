@@ -185,10 +185,10 @@ def display_visualization(visualization_data: Dict[str, Any]) -> None:
         
         # If all are zero, assign proportional timestamps based on total duration
         if all_zero_timestamps:
-            # Get lyrics data if available in session state
-            lyrics_data = st.session_state.get("lyrics_data", [])
-            # Use a more reasonable default duration - 26 seconds for the current song
-            audio_duration = st.session_state.get("audio_duration", 26)  # Default to 26 seconds for this song
+            # Get transcript data if available in session state
+            transcript_data = st.session_state.get("lyrics_data", [])
+            # Use a more reasonable default duration - 126 seconds (2:06 minutes) for the current song
+            audio_duration = st.session_state.get("audio_duration", 126)  # Default to 126 seconds (2:06 minutes) for this song
             
             # Calculate timestamps based on scene distribution
             num_scenes = len(scenes)
@@ -280,18 +280,22 @@ def get_file_download_link(file_path, link_text="Download File"):
     return f'<a href="data:application/octet-stream;base64,{b64}" download="{file_name}">{link_text}</a>'
 
 
-def create_video_from_visualization(visualization_data: Dict[str, Any], lyrics_data: List[Dict[str, str]], audio_path: str, use_existing_visuals: bool = False, scene_folder_name: str = None) -> str:
+def create_video_from_visualization(visualization_data: Dict[str, Any], transcript_data: List[Dict[str, str]], audio_path: str, use_existing_visuals: bool = False, scene_folder_name: str = None) -> str:
     """
-    Create a video from visualization data, lyrics, and audio.
+    Create a video from visualization data, transcript, and audio.
     
     Args:
-        visualization_data: Dictionary containing visualization results
-        lyrics_data: List of dictionaries with timestamps and text
+        visualization_data: Dictionary with scenes, styles, etc.
+        transcript_data: List of dictionaries with timestamps and text (transcript lines)
         audio_path: Path to the audio file
         
     Returns:
         Path to the created video file
     """
+    # Create a local reference to lyrics_data for compatibility
+    # This ensures all code that might try to access lyrics_data will work
+    lyrics_data = transcript_data
+    
     # Extract scenes from visualization data
     extracted_data = visualization_data
     
@@ -355,8 +359,8 @@ def create_video_from_visualization(visualization_data: Dict[str, Any], lyrics_d
             st.session_state.using_fallback_duration = False
         except Exception as e:
             st.error(f"Error loading audio file: {str(e)}")
-            # Create a placeholder audio with 26 seconds duration for this specific song
-            audio_duration = 26
+            # Create a placeholder audio with 126 seconds duration (2:06 minutes) for the current audio file
+            audio_duration = 126
             audio_clip = None
             # Always update session state with the correct duration
             st.session_state.audio_duration = audio_duration
@@ -375,17 +379,17 @@ def create_video_from_visualization(visualization_data: Dict[str, Any], lyrics_d
             # Check if all start times are 00:00:00, which indicates a problem
             all_zero_timestamps = all(s.get("start_time", "00:00:00") == "00:00:00" for s in scenes)
             
-            # If all are zero, assign timestamps from lyrics data
-            if all_zero_timestamps and lyrics_data:
-                # First, sort the lyrics data by timestamp to ensure it's in order
-                sorted_lyrics = sorted(lyrics_data, key=lambda x: time_to_seconds(x.get("timestamp", "00:00:00")))
+            # If all are zero, assign timestamps from transcript data
+            if all_zero_timestamps and transcript_data:
+                # First, sort the transcript data by timestamp to ensure it's in order
+                sorted_lyrics = sorted(transcript_data, key=lambda x: time_to_seconds(x.get("timestamp", "00:00:00")))
                 
-                # Calculate how many lyrics lines correspond to each scene roughly
+                # Calculate how many transcript lines correspond to each scene roughly
                 lines_per_scene = max(1, len(sorted_lyrics) // len(scenes))
                 
-                # Assign timestamps to scenes based on lyrics timing
+                # Assign timestamps to scenes based on transcript timing
                 for i, scene in enumerate(scenes):
-                    # Get starting timestamp for this scene from corresponding lyrics
+                    # Get starting timestamp for this scene from corresponding transcript
                     start_idx = i * lines_per_scene
                     if start_idx < len(sorted_lyrics):
                         scene["start_time"] = sorted_lyrics[start_idx].get("timestamp", "00:00:00")
@@ -396,7 +400,7 @@ def create_video_from_visualization(visualization_data: Dict[str, Any], lyrics_d
                         if end_idx < len(sorted_lyrics):
                             scene["end_time"] = sorted_lyrics[end_idx].get("timestamp", "00:00:00")
                         else:
-                            # If we've run out of lyrics, use a proportional timing
+                            # If we've run out of transcript lines, use a proportional timing
                             portion = (i + 1) / len(scenes)
                             seconds = int(audio_duration * portion)
                             scene["end_time"] = f"{seconds // 60:02d}:{seconds % 60:02d}"
@@ -550,15 +554,15 @@ def create_video_from_visualization(visualization_data: Dict[str, Any], lyrics_d
                         gray_value = 20 + (i * 30) % 235
                         bg_clip = mpy.ColorClip((1280, 720), color=(gray_value, gray_value, gray_value), duration=duration).set_start(start_time)
                 
-                # Add text overlay for lyrics
+                # Add text overlay for transcript
                 text_overlay = scene.get("text_overlay") or ""
                 
-                # Find matching lyrics for this time period
+                # Find matching transcript lines for this time period
                 matching_lyrics = []
-                for lyric in lyrics_data:
-                    lyric_time = time_to_seconds(lyric.get("timestamp", "00:00:00"))
-                    if start_time <= lyric_time < end_time:
-                        matching_lyrics.append(lyric["text"])
+                for transcript_line in transcript_data:
+                    transcript_time = time_to_seconds(transcript_line.get("timestamp", "00:00:00"))
+                    if start_time <= transcript_time < end_time:
+                        matching_lyrics.append(transcript_line["text"])
                 
                 # Add this scene to clips list
                 clips.append(bg_clip)
@@ -780,14 +784,14 @@ def create_demo_visualization() -> Dict[str, Any]:
                 "end_time": "00:00:15",
                 "visual_elements": ["nature_scene.jpg", "bird_flying.gif"],
                 "transitions": ["dissolve"],
-                "text_overlay": "First verse lyrics here"
+                "text_overlay": "Opening statement from the podcast"
             },
             {
                 "start_time": "00:00:15",
                 "end_time": "00:00:25",
                 "visual_elements": ["ocean_waves.mp4"],
                 "transitions": ["slide_left"],
-                "text_overlay": "More lyrics continuing the story"
+                "text_overlay": "Continued discussion from the podcast"
             }
         ],
         "audio_sync_points": [

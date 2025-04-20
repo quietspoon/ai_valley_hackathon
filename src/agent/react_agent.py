@@ -59,19 +59,19 @@ def analyze_lyrics(lyrics_data: List[Dict[str, Any]] = None) -> Dict[str, Any]:
             # Remove the end timestamp marker at the beginning of the text (e.g., "-00:25 ")
             line["text"] = line["text"].split(" ", 1)[1] if " " in line["text"] else line["text"]
     
-    # Group lyrics into meaningful segments (verses, chorus, bridge, etc.)
+    # Group transcript into meaningful segments (topics, sections, etc.)
     segments = []
     current_segment = {"lines": [], "start_time": lyrics_data[0]["timestamp"], "end_time": ""}
     segment_id = 1
-    segment_types = ["intro", "verse", "pre-chorus", "chorus", "bridge", "outro"]
+    segment_types = ["introduction", "main_point", "example", "anecdote", "discussion", "conclusion"]
     current_segment_type_index = 0
     
     # Group every 4-8 lines as a segment (simplified approach)
     for i, line in enumerate(lyrics_data):
         current_segment["lines"].append(line)
         
-        # Create a new segment every 4-8 lines (adjust as needed)
-        if len(current_segment["lines"]) >= 4 and (len(current_segment["lines"]) >= 8 or i == len(lyrics_data) - 1 or i % 4 == 3):
+        # Create a new segment every 6-12 lines for podcast content (longer segments for discussion)
+        if len(current_segment["lines"]) >= 6 and (len(current_segment["lines"]) >= 12 or i == len(lyrics_data) - 1 or i % 6 == 5):
             # Calculate segment start and end times
             current_segment["start_time"] = current_segment["lines"][0]["timestamp"]
             current_segment["end_time"] = current_segment["lines"][-1]["timestamp"]
@@ -596,7 +596,7 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
 
 # Define input state type
 class AgentState(TypedDict):
-    """State for the lyrics visualizer agent."""
+    """State for the Audio Visualizer agent."""
     lyrics_data: List[Dict[str, Any]]
     audio_data: Union[Dict[str, Any], None]
     user_requirements: str
@@ -612,7 +612,7 @@ def create_lyrics_visualizer_agent():
     
     # Create the LLM
     llm = ChatOpenAI(
-        model="gpt-4o", 
+        model="gpt-4o-mini", 
         temperature=0.7, 
         api_key=api_key
     )
@@ -703,12 +703,12 @@ def create_lyrics_visualizer_agent():
 
 # Example usage (for testing)
 if __name__ == "__main__":
-    # Sample data for testing
+    # Sample data for testing - with generic content only
     sample_lyrics_data = [
-        {"timestamp": "00:00:05", "text": "Verse 1: Starting on a journey"},
-        {"timestamp": "00:00:10", "text": "Through the unknown wilderness"},
-        {"timestamp": "00:00:15", "text": "Seeking truth and meaning"},
-        {"timestamp": "00:00:20", "text": "In a world of emptiness"},
+        {"timestamp": "00:00:05", "text": "Line 1 of transcript"},
+        {"timestamp": "00:00:10", "text": "Line 2 of transcript"},
+        {"timestamp": "00:00:15", "text": "Line 3 of transcript"},
+        {"timestamp": "00:00:20", "text": "Line 4 of transcript"},
     ]
     
     sample_audio_data = {
@@ -716,13 +716,13 @@ if __name__ == "__main__":
         "tempo": 120,  # BPM
         "key": "C Major",
         "sections": [
-            {"start": 0, "end": 20, "type": "intro"},
-            {"start": 20, "end": 60, "type": "verse"},
-            {"start": 60, "end": 90, "type": "chorus"},
+            {"start": 0, "end": 20, "type": "section1"},
+            {"start": 20, "end": 60, "type": "section2"},
+            {"start": 60, "end": 90, "type": "section3"},
         ]
     }
     
-    sample_requirements = "Create a nature-themed visualization that reflects the journey metaphor in the lyrics. Use warm colors for the chorus sections."
+    sample_requirements = "Create a visualization based on the sample content."
     
     # Create the agent
     agent = create_lyrics_visualizer_agent()

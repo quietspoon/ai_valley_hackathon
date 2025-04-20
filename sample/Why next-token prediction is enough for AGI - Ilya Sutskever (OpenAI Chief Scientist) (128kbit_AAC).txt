@@ -1,0 +1,63 @@
+00:00-00:04
+i challenge the claim that next token prediction cannot surpass human performance
+
+00:04-00:13
+it looks like on the surface it cannot it looks on the surface if you just learn to imitate to
+
+00:13-00:19
+predict what people do it means that you can only copy people but there here is a counter argument
+
+00:19-00:25
+for why it might not be quite so if your neural net is if your base neural net is smart enough
+
+00:25-00:31
+you just ask it like what would what would a person with like great insight and wisdom and
+
+00:31-00:36
+capability do maybe such person doesn't exist but there's a pretty good chance that the neural net
+
+00:36-00:43
+will be able to extrapolate how such a person should behave do you see what i mean yes although
+
+00:43-00:48
+where would it get the sort of insight about what that person would do if not from from the data of
+
+00:48-00:52
+regular people because like if you think about it what does it mean to predict the next token well
+
+00:52-00:57
+enough what does it mean actually it's actually it's a much it's a deeper question than it seems
+
+00:57-01:07
+predicting the next token well means that you understand the underlying reality that led to the
+
+01:07-01:13
+creation of that token it's not statistics like it is statistics but what is statistics
+
+01:13-01:21
+in order to and to understand those statistics to compress them you need to understand what is it about
+
+01:21-01:26
+the world that creates this statistics and so then you say okay well i have all those people what is
+
+01:26-01:31
+it about people that creates their behaviors well they have you know they have thoughts and their
+
+01:31-01:38
+feelings and they have ideas and they do things in certain ways all of those could be deduced from
+
+01:38-01:46
+next token prediction and i'd argue that this should make it possible not indefinitely but to a to a pretty
+
+01:46-01:50
+decent degree to say well can you guess what you what you do if you took a person with like this
+
+01:50-01:56
+characteristic and that characteristic like such a person doesn't exist but because you're so good
+
+01:56-02:00
+at predicting the next token you should still be able to guess what that person would do this hypothetical
+
+02:00-02:06
+imaginary person with far greater mental ability than the rest of us
+

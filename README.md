@@ -1,4 +1,4 @@
-# Lyrics Visualizer Agent
+# Audio Visualizer Agent
 
 An AI-powered agent that creates visual experiences synchronized with lyrics and audio, built using LangGraph, Streamlit, and OpenAI.
 
