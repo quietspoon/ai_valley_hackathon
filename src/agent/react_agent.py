@@ -553,13 +553,15 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         }
     }
     
-    # Add scenes from the timeline
+    # Process segments and create scenes
+    processed_segments = []
+    
+    # First, generate images for all segments if needed
     for segment in timeline.get("segments", []):
         # Generate an image for this segment if no image_url is provided
         if not segment.get("image_url") and segment.get("text"):
             try:
                 # Use the .invoke() method instead of direct function call with keyword arguments
-                # This fixes the deprecation warning in langchain-core 0.1.47
                 segment["image_url"] = generate_image_for_segment.invoke({
                     "segment_text": segment.get("text", ""),
                     "segment_type": segment.get("segment_type", "verse")
@@ -568,7 +570,38 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
                 print(f"Error generating image: {str(e)}")
                 # Continue without an image if generation fails
                 pass
+        processed_segments.append(segment)
+    
+    # Helper function to convert time string to seconds
+    def time_str_to_seconds(time_str):
+        if not time_str:
+            return 0
+        parts = time_str.split(":")
+        if len(parts) == 2:  # MM:SS format
+            return int(parts[0]) * 60 + int(parts[1])
+        elif len(parts) == 3:  # HH:MM:SS format
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        return 0
+    
+    # Helper function to convert seconds to time string
+    def seconds_to_time_str(seconds):
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes:02d}:{secs:02d}"
+    
+    # Split segments into scenes, ensuring no scene is longer than 5 seconds
+    MAX_SCENE_DURATION = 5  # Maximum duration in seconds
+    TARGET_AVG_DURATION = 3  # Target average duration in seconds
+    
+    for segment in processed_segments:
+        start_seconds = time_str_to_seconds(segment.get("start_time", "00:00:00"))
+        end_seconds = time_str_to_seconds(segment.get("end_time", "00:00:00"))
+        duration = end_seconds - start_seconds
         
+        # Skip invalid segments
+        if duration <= 0:
+            continue
+            
         # Determine appropriate transitions based on segment type
         transitions = ["fade_in"]
         if segment.get("segment_type") == "chorus":
@@ -576,20 +609,49 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         elif segment.get("segment_type") == "bridge":
             transitions = ["slide_left"]
         
-        scene = {
-            "start_time": segment.get("start_time", "00:00:00"),
-            "end_time": segment.get("end_time", "00:00:00"),
-            "visual_elements": [segment.get("image_url", "")] if segment.get("image_url") else [],
-            "transitions": transitions,
-            "text_overlay": segment.get("text", "")
-        }
-        visualization["scenes"].append(scene)
-        
-        # Add sync point
-        visualization["audio_sync_points"].append({
-            "time": segment.get("start_time", "00:00:00"),
-            "event": f"segment_{segment.get('segment_id', 0)}"
-        })
+        # Split long segments into multiple scenes
+        if duration > MAX_SCENE_DURATION:
+            # Calculate number of scenes needed
+            # Use TARGET_AVG_DURATION to create more scenes (but each ≤ MAX_SCENE_DURATION)
+            num_scenes = max(2, round(duration / TARGET_AVG_DURATION))
+            scene_duration = duration / num_scenes
+            
+            # Create multiple scenes from this segment
+            for i in range(num_scenes):
+                scene_start = start_seconds + (i * scene_duration)
+                scene_end = min(end_seconds, scene_start + scene_duration)
+                
+                scene = {
+                    "start_time": seconds_to_time_str(scene_start),
+                    "end_time": seconds_to_time_str(scene_end),
+                    "visual_elements": [segment.get("image_url", "")] if segment.get("image_url") else [],
+                    "transitions": transitions,
+                    "text_overlay": segment.get("text", "")
+                }
+                visualization["scenes"].append(scene)
+                
+                # Add sync point for first scene only
+                if i == 0:
+                    visualization["audio_sync_points"].append({
+                        "time": seconds_to_time_str(scene_start),
+                        "event": f"segment_{segment.get('segment_id', 0)}"
+                    })
+        else:
+            # Create a single scene for this segment (already under MAX_SCENE_DURATION)
+            scene = {
+                "start_time": segment.get("start_time", "00:00:00"),
+                "end_time": segment.get("end_time", "00:00:00"),
+                "visual_elements": [segment.get("image_url", "")] if segment.get("image_url") else [],
+                "transitions": transitions,
+                "text_overlay": segment.get("text", "")
+            }
+            visualization["scenes"].append(scene)
+            
+            # Add sync point
+            visualization["audio_sync_points"].append({
+                "time": segment.get("start_time", "00:00:00"),
+                "event": f"segment_{segment.get('segment_id', 0)}"
+            })
     
     return visualization
 
