@@ -53,8 +53,16 @@ class MusicAgent:
         self.base_path = f"data/{self.song_name}"
         os.makedirs(self.base_path, exist_ok=True)
 
+    @staticmethod
+    def serialize_to_file_name(text, max_length=100):
+        """
+        Sanitizes a string to be safely used as a filename.
+        """
+        import re
+        safe = re.sub(r'[\\/*?:"<>|\'\n\r]', '_', text)
+        return safe[:max_length]
 
-    
+
     def _read_file(self, file_path):
         with open(file_path, "r", encoding="utf-8") as file:
             self.raw_lyrics_by_line = file.readlines()
@@ -164,8 +172,9 @@ class MusicAgent:
         lyric_image_url = await self.generate_image_based_on_description(lyric_desc)
         print(lyric_image_url)
         
-        # Download the image to data/image
-        image_path = os.path.join(self.base_path, f"{lyric.replace(' ','_')}.png")
+        # Use the serialization function for the filename
+        safe_lyric = self.serialize_to_file_name(lyric)
+        image_path = os.path.join(self.base_path, f"{safe_lyric}.png")
         try:
             response = requests.get(lyric_image_url)
             response.raise_for_status()
@@ -195,29 +204,59 @@ class MusicAgent:
         img_clips = []
         txt_clips = []
 
-        # Step 1: Create image clips for each grouped lyric
+        # Calculate padding duration (in seconds)
+        padding = self.convert_to_time(self.grouped_lyrics[0].start_time)
+        # Add an empty image clip at the beginning to match the music delay
+        if padding > 0:
+            empty_img_path = "data/image/empty.png"
+            if not os.path.exists(empty_img_path):
+                os.makedirs(os.path.dirname(empty_img_path), exist_ok=True)
+                from PIL import Image
+                Image.new("RGB", (1024, 1024), color=(0, 0, 0)).save(empty_img_path)
+            img_clips.append(mp.ImageClip(empty_img_path).set_duration(padding))
+
+        # Step 1: Create image clips for each grouped lyric (with no offset)
         for lyric in self.grouped_lyrics:
             start = self.convert_to_time(lyric.start_time)
             end = self.convert_to_time(lyric.end_time)
             duration = max(0.1, end - start)
-            image_path = os.path.join(self.base_path, f"{lyric.lyric.replace(' ','_')}.png")
+            # Use the serialization function for the filename
+            safe_lyric = self.serialize_to_file_name(lyric.lyric)
+            image_path = os.path.join(self.base_path, f"{safe_lyric}.png")
             img_clip = mp.ImageClip(image_path).set_duration(duration)
             img_clips.append(img_clip)
 
         # Step 2: Concatenate all image clips
         image_video = mp.concatenate_videoclips(img_clips, method="compose")
 
-        # Step 3: Create text clips for each lyric line and position them at the correct time
+        # Step 3: Create text clips for each lyric line and position them at the correct time (with offset)
+        # Add an empty text clip for the initial padding
+        if padding > 0:
+            empty_txt_clip = (
+                mp.TextClip(
+                    "",
+                    fontsize=48,
+                    color='white',
+                    font=r"C:\Windows\Fonts\msyh.ttc",  # Use Microsoft YaHei for Chinese support
+                    method='caption',
+                    size=image_video.size
+                )
+                .set_start(0)
+                .set_duration(padding)
+                .set_position('center')
+            )
+            txt_clips.append(empty_txt_clip)
+
         for lyric in self.lyrics_by_line:
-            start = self.convert_to_time(lyric.start_time)
-            end = self.convert_to_time(lyric.end_time)
+            start = self.convert_to_time(lyric.start_time) + padding
+            end = self.convert_to_time(lyric.end_time) + padding
             duration = max(0.1, end - start)
             txt_clip = (
                 mp.TextClip(
                     lyric.lyric,
                     fontsize=48,
                     color='white',
-                    font='Source Han Sans VF',
+                    font=r"C:\Windows\Fonts\msyh.ttc",  # Use Microsoft YaHei for Chinese support
                     method='caption',
                     size=image_video.size
                 )
@@ -248,8 +287,6 @@ if __name__ == "__main__":
     # lyrics = music_agent.load_lyrics("./data/dazhanhongtu.txt")
     # grouped_lyrics = music_agent.group_lyrics()
     # asyncio.run(music_agent.generate_all_images())
-
-
     music_agent = MusicAgent("dazhanhongtu")
     music_agent.load_state()
     music_agent.generate_music_video()
