@@ -467,24 +467,42 @@ def generate_image_for_segment(segment_text: str, segment_type: str = "verse") -
     Returns:
         URL to the generated image.
     """
+    # Limit the text to ensure prompt isn't too long
+    max_text_length = 200
+    truncated_text = segment_text[:max_text_length] + "..." if len(segment_text) > max_text_length else segment_text
+    
     # Create an appropriate prompt based on segment content and type
-    base_prompt = f"Create a visual representation for song lyrics: '{segment_text}'"
+    if segment_type == "introduction":
+        segment_type = "intro"  # Normalize type names
+        
+    base_prompt = f"Create a conceptual visualization for this audio transcript: '{truncated_text}'"
     
     # Enhance prompt based on segment type
     if segment_type == "intro":
-        prompt = f"{base_prompt} Create an establishing mood image that introduces the song's themes."
-    elif segment_type == "chorus":
-        prompt = f"{base_prompt} Create a vibrant, emotional centerpiece image that captures the heart of the song."
-    elif segment_type == "bridge":
-        prompt = f"{base_prompt} Create a transitional image showing contrast or change related to the lyrics."
-    elif segment_type == "outro":
-        prompt = f"{base_prompt} Create a concluding image that gives a sense of resolution or completion."
+        prompt = f"{base_prompt} Create an establishing mood image that introduces the themes of this discussion."
+    elif segment_type == "main_point":
+        prompt = f"{base_prompt} Create a vibrant, meaningful centerpiece image that captures the key concept being discussed."
+    elif segment_type == "example":
+        prompt = f"{base_prompt} Create a specific illustrative image showing this example concept."
+    elif segment_type == "anecdote":
+        prompt = f"{base_prompt} Create a narrative image that tells the story within this anecdote."
+    elif segment_type == "discussion":
+        prompt = f"{base_prompt} Create an image showing intellectual discussion or debate about these concepts."
+    elif segment_type == "conclusion":
+        prompt = f"{base_prompt} Create a concluding image that gives a sense of resolution or key takeaway."
     else:  # verse or default
-        prompt = f"{base_prompt} Create a narrative image that tells the story within these specific lyrics."
-        
-    # Generate the image using DALL-E
-    # Using invoke() instead of __call__ to avoid deprecation warning
-    return generate_image.invoke(prompt)
+        prompt = f"{base_prompt} Create a conceptual image that represents the ideas in this text."
+
+    try:
+        # Generate the image using DALL-E
+        # Using invoke() instead of __call__ to avoid deprecation warning
+        image_url = generate_image.invoke(prompt)
+        print(f"Generated image with prompt: {prompt[:100]}...")
+        return image_url
+    except Exception as e:
+        print(f"Error in generate_image_for_segment: {str(e)}")
+        # Return a placeholder image as fallback
+        return "https://via.placeholder.com/800x600?text=AI+Visualization"
 
 @tool
 def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -559,17 +577,27 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
     # First, generate images for all segments if needed
     for segment in timeline.get("segments", []):
         # Generate an image for this segment if no image_url is provided
-        if not segment.get("image_url") and segment.get("text"):
+        if (not segment.get("image_url") or segment.get("image_url") == "") and segment.get("text"):
             try:
                 # Use the .invoke() method instead of direct function call with keyword arguments
-                segment["image_url"] = generate_image_for_segment.invoke({
+                print(f"Generating image for segment with text: {segment.get('text', '')[:50]}...")
+                image_url = generate_image_for_segment.invoke({
                     "segment_text": segment.get("text", ""),
                     "segment_type": segment.get("segment_type", "verse")
                 })
+                
+                # Validate the image URL
+                if image_url and isinstance(image_url, str) and image_url.startswith("http"):
+                    segment["image_url"] = image_url
+                    print(f"Successfully generated image: {image_url[:50]}...")
+                else:
+                    # If the URL is invalid, create a placeholder URL for testing
+                    print(f"Invalid image URL generated: {image_url}")
+                    segment["image_url"] = "https://via.placeholder.com/800x600?text=AI+Visualization"
             except Exception as e:
                 print(f"Error generating image: {str(e)}")
-                # Continue without an image if generation fails
-                pass
+                # Set a fallback image URL for testing
+                segment["image_url"] = "https://via.placeholder.com/800x600?text=Error+Generating+Image"
         processed_segments.append(segment)
     
     # Helper function to convert time string to seconds
@@ -621,10 +649,16 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
                 scene_start = start_seconds + (i * scene_duration)
                 scene_end = min(end_seconds, scene_start + scene_duration)
                 
+                # Ensure we have an image URL to use
+                image_url = segment.get("image_url", "")
+                if not image_url or image_url == "":
+                    # Use a placeholder if no image is available
+                    image_url = "https://via.placeholder.com/800x600?text=AI+Visualization"
+                
                 scene = {
                     "start_time": seconds_to_time_str(scene_start),
                     "end_time": seconds_to_time_str(scene_end),
-                    "visual_elements": [segment.get("image_url", "")] if segment.get("image_url") else [],
+                    "visual_elements": [image_url],  # Always include an image URL
                     "transitions": transitions,
                     "text_overlay": segment.get("text", "")
                 }
@@ -638,10 +672,16 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
                     })
         else:
             # Create a single scene for this segment (already under MAX_SCENE_DURATION)
+            # Ensure we have an image URL to use
+            image_url = segment.get("image_url", "")
+            if not image_url or image_url == "":
+                # Use a placeholder if no image is available
+                image_url = "https://via.placeholder.com/800x600?text=AI+Visualization"
+                
             scene = {
                 "start_time": segment.get("start_time", "00:00:00"),
                 "end_time": segment.get("end_time", "00:00:00"),
-                "visual_elements": [segment.get("image_url", "")] if segment.get("image_url") else [],
+                "visual_elements": [image_url],  # Always include an image URL
                 "transitions": transitions,
                 "text_overlay": segment.get("text", "")
             }
