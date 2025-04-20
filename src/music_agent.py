@@ -4,6 +4,8 @@ import dotenv
 import json
 import asyncio
 import pydantic
+import prompts
+import requests
 
 def get_api_key():
     dotenv.load_dotenv()
@@ -12,14 +14,14 @@ def get_api_key():
 class ImageDescResponse(pydantic.BaseModel):
     image_desc: str
 
-class GroupedLyrics(pydantic.BaseModel):
-    lyrics: list[str]
 
 class LyricLine:
-    def __init__(self, lyric, start_time, end_time):
+    def __init__(self, lyric, start_time, end_time, image_path = None):
         self.lyric = lyric
         self.start_time = start_time
         self.end_time = end_time
+        self.image_path = image_path
+
     def __str__(self):
         return f"{self.lyric} ({self.start_time} - {self.end_time})"
     def to_dict(self):
@@ -95,14 +97,25 @@ class MusicAgent:
         image_url = response.data[0].url
         return image_url
 
-
+    def group_lyrics(self):
+        # Mock, group each 4 lyrics into one lyrics
+        grouped_lyrics = []
+        for i in range(0, len(self.lyrics_by_line), 4):
+            lyric_group = [x.lyric for x in self.lyrics_by_line[i:i+4]] 
+            combined_lyric = " ".join(lyric_group)
+            last_index = min(i+3, len(self.lyrics_by_line)-1)
+            group = LyricLine(combined_lyric, self.lyrics_by_line[i].start_time, self.lyrics_by_line[last_index].end_time)
+            grouped_lyrics.append(group)
+        self.lyrics_by_line = grouped_lyrics
+        return grouped_lyrics
+        
     async def generate_image_description(self, lyric):
         response = await self.client.beta.chat.completions.parse(
             model="gpt-4.1",
             messages=[
                 {
                     "role": "system",
-                    "content": "Create an image description, based on the lyrics given by the user.\n # Lyrics \n"
+                    "content": prompts.IMAGE_DESCRIPTION_PROMPT,
                 },
                 {
                     "role": "user",
@@ -112,11 +125,33 @@ class MusicAgent:
             response_format=ImageDescResponse,
         )
         return response.choices[0].message.parsed.image_desc
+
+
     async def generate_image_based_on_lyrics(self, lyric):
         lyric_desc = await self.generate_image_description(lyric)
         lyric_image_url = await self.generate_image_based_on_description(lyric_desc)
         print(lyric_image_url)
-        return lyric_image_url
+        
+        # Download the image to data/image
+        image_dir = "data/image"
+        os.makedirs(image_dir, exist_ok=True)
+        image_path = os.path.join(image_dir, f"{lyric.replace(' ','_')}.png")
+        try:
+            response = requests.get(lyric_image_url)
+            response.raise_for_status()
+            with open(image_path, "wb") as f:
+                f.write(response.content)
+            lyric.image_path = image_path
+            print(f"Image saved to {image_path}")
+        except Exception as e:
+            print(f"Failed to download image: {e}")
+        return image_path
+
+    async def generate_all_images(self):
+        # Generate all images based on lyrics
+        for lyric in self.lyrics_by_line:
+            await self.generate_image_based_on_lyrics(lyric.lyric)
+
     
     async def generate_music(self, lyric):
         pass
@@ -125,5 +160,8 @@ class MusicAgent:
 if __name__ == "__main__":
     music_agent = MusicAgent()
     lyrics = music_agent.load_lyrics("./data/dazhanhongtu.txt")
+    grouped_lyrics = music_agent.group_lyrics()
     # Convert LyricLine objects to dicts for JSON serialization
-    lyric_image_url = asyncio.run(music_agent.generate_image_based_on_lyrics(lyrics[0].lyric))
+    lyric = music_agent.lyrics_by_line[0].lyric
+    
+    asyncio.run(music_agent.generate_all_images())
