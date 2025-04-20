@@ -199,7 +199,7 @@ def generate_image(prompt: str) -> str:
 
 
 @tool
-def create_scene_layout(scene_data: Dict[str, Any]) -> Dict[str, Any]:
+def create_scene_layout(scene_data: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Creates a visual scene layout based on the provided scene data.
     
@@ -209,8 +209,17 @@ def create_scene_layout(scene_data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         A structured scene layout specification.
     """
-    if not scene_data:
-        return {"error": "No scene data provided"}
+    # Ensure scene_data is a valid dictionary
+    if not scene_data or not isinstance(scene_data, dict):
+        # Instead of returning an error, create a default scene layout
+        scene_data = {
+            "segment_id": 1,
+            "segment_type": "verse",
+            "start_time": "00:00:00",
+            "end_time": "00:00:30",
+            "text": "Default scene",
+            "image_url": ""
+        }
     
     # Extract scene information
     segment_id = scene_data.get("segment_id", 0)
@@ -242,19 +251,108 @@ def create_scene_layout(scene_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @tool
-def synchronize_visuals(visuals: List[Dict[str, Any]], lyrics_segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+def synchronize_visuals(visuals: List[Dict[str, Any]] = None, lyrics_segments: List[Dict[str, Any]] = None, scene_layout: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Synchronizes visual elements with lyrics based on timestamps.
     
     Args:
         visuals: List of dictionaries containing visual elements and their timing.
         lyrics_segments: List of dictionaries containing lyrics segments and their timestamps.
+        scene_layout: Optional scene layout from create_scene_layout to use as a fallback.
         
     Returns:
         A timeline of synchronized visual and audio elements.
     """
+    # Access global data if available when parameters are None
+    global GLOBAL_LYRICS_DATA, GLOBAL_AUDIO_DATA
+    
+    # Check if we have a scene_layout to work with
+    if scene_layout and isinstance(scene_layout, dict):
+        # Extract data from scene_layout if it has the required fields
+        segment_id = scene_layout.get("segment_id")
+        start_time = scene_layout.get("start_time")
+        end_time = scene_layout.get("end_time")
+        segment_type = scene_layout.get("segment_type")
+        visual_elements = scene_layout.get("visual_elements", [])
+        text_overlay = scene_layout.get("text_overlay", "")
+        
+        if segment_id is not None and start_time and end_time:
+            # Create a single visual from scene_layout
+            if not visuals:
+                visuals = [{
+                    "segment_id": segment_id,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "visual_elements": visual_elements
+                }]
+            
+            # Create a single lyrics segment from scene_layout if needed
+            if not lyrics_segments:
+                lyrics_segments = [{
+                    "segment_id": segment_id,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "segment_type": segment_type,
+                    "text": text_overlay
+                }]
+    
+    # Provide default empty lists if parameters are None
+    if visuals is None:
+        visuals = []
+    if lyrics_segments is None:
+        # Try to use global lyrics data
+        if GLOBAL_LYRICS_DATA:
+            # Check if GLOBAL_LYRICS_DATA is a dictionary or a list
+            if isinstance(GLOBAL_LYRICS_DATA, dict):
+                # Extract segments from global lyrics data if it's a dictionary
+                segments_data = GLOBAL_LYRICS_DATA.get("segments", [])
+                if segments_data:
+                    lyrics_segments = segments_data
+            elif isinstance(GLOBAL_LYRICS_DATA, list):
+                # If GLOBAL_LYRICS_DATA is already a list, use it directly
+                lyrics_segments = GLOBAL_LYRICS_DATA
+        else:
+            lyrics_segments = []
+    
+    # If we still don't have any data, create default data based on audio duration
     if not visuals or not lyrics_segments:
-        return {"error": "Missing visuals or lyrics segments data"}
+        # Create a default segment based on audio duration if available
+        if GLOBAL_AUDIO_DATA and "duration" in GLOBAL_AUDIO_DATA:
+            duration = GLOBAL_AUDIO_DATA["duration"]
+            end_time = f"{int(duration // 60):02d}:{int(duration % 60):02d}"
+            
+            # Create default lyrics segment
+            if not lyrics_segments:
+                default_segment = {
+                    "segment_id": 1,
+                    "start_time": "00:00",
+                    "end_time": end_time,
+                    "segment_type": "verse",
+                    "text": "Default visualization"
+                }
+                lyrics_segments = [default_segment]
+            
+            # Create default visual
+            if not visuals:
+                default_visual = {
+                    "segment_id": 1,
+                    "start_time": "00:00",
+                    "end_time": end_time,
+                    "visual_elements": []
+                }
+                visuals = [default_visual]
+    
+    # Ensure lyrics_segments is a list if we got a single dictionary
+    if isinstance(lyrics_segments, dict):
+        lyrics_segments = [lyrics_segments]
+    
+    # Ensure visuals is a list if we got a single dictionary
+    if isinstance(visuals, dict):
+        visuals = [visuals]
+    
+    # If we still have missing data, return error
+    if not visuals or not lyrics_segments:
+        return {"error": "Missing visuals or lyrics segments data", "segments": [], "total_duration": "00:00:00"}
     
     # Create a synchronized timeline
     timeline = {
@@ -262,26 +360,62 @@ def synchronize_visuals(visuals: List[Dict[str, Any]], lyrics_segments: List[Dic
         "total_duration": "00:00:00"
     }
     
-    # Match visuals to lyrics segments based on segment_id
+    # Process all lyrics segments
     for segment in lyrics_segments:
-        segment_id = segment.get("segment_id", 0)
+        # Check if segment is a dictionary or something else
+        if isinstance(segment, dict):
+            segment_id = segment.get("segment_id", 0)
+            segment_start = segment.get("start_time", "00:00:00")
+            segment_end = segment.get("end_time", "00:00:00")
+        else:
+            # Handle non-dictionary segments as best we can
+            segment_id = 0
+            segment_start = "00:00:00"
+            segment_end = "00:00:00"
         
-        # Find matching visual for this segment
-        matching_visual = None
+        # Find matching visuals for this segment based on overlapping time ranges or segment_id
+        matching_visuals = []
         for visual in visuals:
-            if visual.get("segment_id", 0) == segment_id:
-                matching_visual = visual
-                break
+            # Check if visual is a dictionary
+            if isinstance(visual, dict):
+                visual_start = visual.get("start_time", "00:00:00")
+                visual_end = visual.get("end_time", "00:00:00")
+                visual_id = visual.get("segment_id", 0)
+            else:
+                # Handle non-dictionary visuals
+                visual_start = "00:00:00"
+                visual_end = "00:00:00"
+                visual_id = 0
+            
+            # Check if visual matches by segment_id or overlapping time ranges
+            if visual_id == segment_id or (visual_start <= segment_end and visual_end >= segment_start):
+                matching_visuals.append(visual)
         
         # Create a synchronized segment
         sync_segment = {
             "segment_id": segment_id,
-            "segment_type": segment.get("segment_type", "verse"),
-            "start_time": segment.get("start_time", "00:00:00"),
-            "end_time": segment.get("end_time", "00:00:00"),
-            "text": segment.get("text", ""),
-            "image_url": matching_visual.get("visual_elements", [""])[0] if matching_visual else ""
+            "segment_type": "verse",  # Default value
+            "start_time": segment_start,
+            "end_time": segment_end,
+            "text": "",  # Default value
+            "image_url": ""
         }
+        
+        # Add additional properties if segment is a dictionary
+        if isinstance(segment, dict):
+            sync_segment["segment_type"] = segment.get("segment_type", "verse")
+            sync_segment["text"] = segment.get("text", "")
+        
+        # Add image URL if available
+        if matching_visuals:
+            # Use the URL directly if it exists
+            if "url" in matching_visuals[0]:
+                sync_segment["image_url"] = matching_visuals[0]["url"]
+            # Otherwise check for visual_elements
+            elif "visual_elements" in matching_visuals[0]:
+                elements = matching_visuals[0]["visual_elements"]
+                if elements and isinstance(elements, list) and len(elements) > 0:
+                    sync_segment["image_url"] = elements[0] if isinstance(elements[0], str) else ""
         
         timeline["segments"].append(sync_segment)
     
