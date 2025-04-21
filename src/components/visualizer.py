@@ -376,58 +376,67 @@ def create_video_from_visualization(visualization_data: Dict[str, Any], transcri
         if "scenes" in extracted_data and extracted_data["scenes"]:
             scenes = extracted_data["scenes"]
             
-            # Check if all start times are 00:00:00, which indicates a problem
+            # Check if all start times are 00:00:00, which indicates we need to distribute evenly
             all_zero_timestamps = all(s.get("start_time", "00:00:00") == "00:00:00" for s in scenes)
             
-            # If all are zero, assign timestamps from transcript data
-            if all_zero_timestamps and transcript_data:
-                # First, sort the transcript data by timestamp to ensure it's in order
-                sorted_lyrics = sorted(transcript_data, key=lambda x: time_to_seconds(x.get("timestamp", "00:00:00")))
+            # Always ensure scenes are evenly distributed across the audio duration
+            # This ensures all scenes fit in the video and scale with its duration
+            
+            # Calculate how many scenes we have
+            num_scenes = len(scenes)
+            # Calculate the ideal duration for each scene
+            scene_duration = audio_duration / num_scenes
+            
+            # Distribute scenes evenly across audio duration
+            for i, scene in enumerate(scenes):
+                # Calculate start and end time for this scene
+                start_seconds = i * scene_duration
+                end_seconds = (i + 1) * scene_duration
                 
-                # Calculate how many transcript lines correspond to each scene roughly
-                lines_per_scene = max(1, len(sorted_lyrics) // len(scenes))
+                # Format as time strings (MM:SS format)
+                start_minutes = int(start_seconds // 60)
+                start_secs = int(start_seconds % 60)
+                scene["start_time"] = f"{start_minutes:02d}:{start_secs:02d}"
                 
-                # Assign timestamps to scenes based on transcript timing
-                for i, scene in enumerate(scenes):
-                    # Get starting timestamp for this scene from corresponding transcript
-                    start_idx = i * lines_per_scene
-                    if start_idx < len(sorted_lyrics):
-                        scene["start_time"] = sorted_lyrics[start_idx].get("timestamp", "00:00:00")
-                    
-                    # Calculate end time based on next scene's start time or audio duration
-                    if i < len(scenes) - 1:
-                        end_idx = (i + 1) * lines_per_scene
-                        if end_idx < len(sorted_lyrics):
-                            scene["end_time"] = sorted_lyrics[end_idx].get("timestamp", "00:00:00")
-                        else:
-                            # If we've run out of transcript lines, use a proportional timing
-                            portion = (i + 1) / len(scenes)
-                            seconds = int(audio_duration * portion)
-                            scene["end_time"] = f"{seconds // 60:02d}:{seconds % 60:02d}"
-                    else:
-                        # Last scene goes to the end of the audio
-                        minutes = int(audio_duration // 60)
-                        seconds = int(audio_duration % 60)
-                        scene["end_time"] = f"{minutes:02d}:{seconds:02d}"
+                # For the last scene, ensure it goes exactly to the end
+                if i == num_scenes - 1:
+                    end_minutes = int(audio_duration // 60)
+                    end_secs = int(audio_duration % 60)
+                    scene["end_time"] = f"{end_minutes:02d}:{end_secs:02d}"
+                else:
+                    end_minutes = int(end_seconds // 60)
+                    end_secs = int(end_seconds % 60)
+                    scene["end_time"] = f"{end_minutes:02d}:{end_secs:02d}"
+                
+                # Log the scene timing
+                st.write(f"Scene {i+1}/{num_scenes}: {scene['start_time']} to {scene['end_time']}")
             
             # Sort scenes by start time
             scenes = sorted(scenes, key=lambda x: time_to_seconds(x.get("start_time", "00:00:00")))
+            
+            # Log scene distribution for debugging
+            st.write(f"Total scenes: {len(scenes)} for audio duration: {audio_duration:.2f}s")
+            st.write(f"Average scene duration: {audio_duration/len(scenes):.2f}s")
             
             # Process each scene
             for i, scene in enumerate(scenes):
                 # Get scene timing
                 start_time = time_to_seconds(scene.get("start_time", "00:00:00"))
+                end_time = time_to_seconds(scene.get("end_time", "00:00:00"))
                 
-                # For the last scene, use audio duration as end time
-                if i == len(scenes) - 1:
-                    end_time = audio_duration
-                else:
-                    end_time = time_to_seconds(scenes[i+1].get("start_time", "00:00:00"))
+                # Ensure end time doesn't exceed audio duration
+                end_time = min(end_time, audio_duration)
                 
                 # Create scene duration
                 duration = end_time - start_time
+                
+                # Ensure minimum scene duration
                 if duration <= 0:
+                    st.warning(f"Skipping scene {i+1} due to invalid duration: {duration}s")
                     continue  # Skip invalid scenes
+                    
+                # Log the actual scene timing being used
+                st.write(f"Using scene {i+1} timing: {start_time:.2f}s to {end_time:.2f}s (duration: {duration:.2f}s)")
                 
                 # Get background for this scene
                 bg_clip = None
@@ -574,7 +583,11 @@ def create_video_from_visualization(visualization_data: Dict[str, Any], transcri
             if clips:
                 # Create final composite clip
                 final_clip = mpy.CompositeVideoClip(clips, size=(1280, 720))
-                final_clip = final_clip.set_duration(audio_duration)
+                
+                # Double check that our clip duration matches audio duration
+                if final_clip.duration != audio_duration:
+                    st.warning(f"Adjusting final clip duration from {final_clip.duration:.2f}s to match audio: {audio_duration:.2f}s")
+                    final_clip = final_clip.set_duration(audio_duration)
                 
                 # Add audio if available
                 if audio_clip:

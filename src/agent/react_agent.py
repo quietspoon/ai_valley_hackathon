@@ -526,8 +526,16 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
     global GLOBAL_LYRICS_DATA
     global GLOBAL_AUDIO_DATA
     
-    # Ensure we have a valid timeline object
-    if timeline is None:
+    # Handle different types of input - lists or dictionaries
+    if isinstance(timeline, list):
+        # If timeline is a list (like list of segments), convert it to proper format
+        timeline = {
+            "segments": timeline,
+            "total_duration": "00:00:00"
+        }
+    
+    # Now ensure we have a valid timeline object
+    if timeline is None or not isinstance(timeline, dict):
         # Try to create a default timeline based on global data
         timeline = {"segments": [], "total_duration": "00:00:00"}
         
@@ -550,18 +558,27 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
                 timeline["segments"] = GLOBAL_LYRICS_DATA["segments"]
                 if "total_duration" in GLOBAL_LYRICS_DATA:
                     timeline["total_duration"] = GLOBAL_LYRICS_DATA["total_duration"]
-    if not timeline or not isinstance(timeline, dict) or "segments" not in timeline:
-        # Set a default timeline if none is provided
-        timeline = {
-            "segments": [],
-            "total_duration": "00:00:00"
-        }
-        # Return an error if there are no segments
-        if not timeline.get("segments", []):
-            return {
-                "error": "Invalid timeline data",
-                "visualization_type": "none"
+    
+    # Ensure segments key exists
+    if "segments" not in timeline:
+        # Check if the timeline itself is segments
+        if any(isinstance(item, dict) and "segment_id" in item for item in timeline.values() if isinstance(item, dict)):
+            segments = [v for k, v in timeline.items() if isinstance(v, dict) and "segment_id" in v]
+            timeline = {"segments": segments, "total_duration": "00:00:00"}
+        else:
+            # Set a default timeline
+            timeline = {
+                "segments": [],
+                "total_duration": "00:00:00"
             }
+    
+    # Return an error if there are no segments and we couldn't create any
+    if not timeline.get("segments", []):
+        return {
+            "error": "Invalid timeline data",
+            "visualization_type": "none",
+            "scenes": []  # Add empty scenes to prevent further errors
+        }
     
     # Create a properly structured visualization data object
     visualization = {
@@ -580,10 +597,74 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         }
     }
     
-    # Split long segments into smaller pieces to ensure more frequent image generation
-    # Especially important for podcasts with fewer transcript entries
+    # Split segments to create lots of scenes - transcript-based content needs frequent visuals
+    # For every 5 seconds we should have a new visual to keep viewers engaged
     subdivided_segments = []
-    max_segment_duration = 10  # Maximum segment duration in seconds before subdivision
+    
+    # Check if we have transcript/lyrics in GLOBAL_LYRICS_DATA to use directly
+    # This is the most accurate way to create scenes - directly from transcript lines
+    if GLOBAL_LYRICS_DATA and isinstance(GLOBAL_LYRICS_DATA, list) and len(GLOBAL_LYRICS_DATA) > 0:
+        print(f"Using {len(GLOBAL_LYRICS_DATA)} transcript lines to create scenes")
+        
+        # Create a scene for every transcript line if possible
+        temp_segments = []
+        for i, line in enumerate(GLOBAL_LYRICS_DATA):
+            if isinstance(line, dict) and line.get("text") and line.get("timestamp"):
+                segment = {
+                    "segment_id": i,
+                    "segment_type": "verse",
+                    "start_time": line.get("timestamp", "00:00:00"),
+                    "end_time": line.get("end_timestamp", "00:00:00"),
+                    "text": line.get("text", ""),
+                    "image_url": ""
+                }
+                temp_segments.append(segment)
+                
+        # Only replace segments if we got a good number from transcript
+        if len(temp_segments) >= 3:
+            timeline["segments"] = temp_segments
+    
+    # Calculate total audio duration from timeline or GLOBAL_AUDIO_DATA
+    total_audio_duration = 0
+    if GLOBAL_AUDIO_DATA and isinstance(GLOBAL_AUDIO_DATA, dict) and "duration" in GLOBAL_AUDIO_DATA:
+        total_audio_duration = GLOBAL_AUDIO_DATA["duration"]
+    else:
+        # Try to estimate from the last segment's end time
+        if timeline.get("segments") and len(timeline.get("segments")) > 0:
+            last_segment = timeline.get("segments")[-1]
+            end_time = last_segment.get("end_time", "00:00:00")
+            # Handle potential missing end_time
+            if end_time == "00:00:00" and "duration" in GLOBAL_AUDIO_DATA:
+                total_audio_duration = GLOBAL_AUDIO_DATA["duration"]
+            else:
+                total_audio_duration = _timestamp_to_seconds(end_time)
+        # Still no audio duration? Check if we have audio data with a duration
+        elif "duration" in GLOBAL_AUDIO_DATA:
+            total_audio_duration = GLOBAL_AUDIO_DATA["duration"]
+    
+    # Ensure we have a minimum duration to prevent division by zero
+    total_audio_duration = max(total_audio_duration, 30)  # Minimum 30 seconds
+    
+    # Determine an appropriate target number of scenes based on audio duration
+    # We want roughly 1 scene every 5 seconds for transcript-based content
+    # This matches user expectations: ~24 scenes for 2min, ~8 scenes for 30sec
+    target_scene_count = max(6, int(total_audio_duration / 5))  # 1 scene per 5 seconds
+    
+    # Add some randomness to prevent perfectly uniform scenes
+    import random
+    random_factor = random.uniform(0.8, 1.2)  # +/- 20% randomness
+    target_scene_count = int(target_scene_count * random_factor)
+    
+    # Ensure reasonable bounds
+    target_scene_count = max(min(target_scene_count, 60), 6)  # Min 6, max 60 scenes
+    
+    # Set very small max_segment_duration to ensure more scenes get created
+    max_segment_duration = max(3, total_audio_duration / max(target_scene_count, 1))
+    
+    print(f"NEW SCALING: Audio duration: {total_audio_duration}s, Target scenes: {target_scene_count}, Max segment duration: {max_segment_duration:.2f}s")
+    
+    # Log the scaling parameters for debugging
+    print(f"Audio duration: {total_audio_duration}s, Target scenes: {target_scene_count}, Max segment duration: {max_segment_duration}s")
     
     # First, ensure all segments have text content
     has_content = False
@@ -629,29 +710,40 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
         
         duration = end_time_sec - start_time_sec
         
-        # If segment is longer than max_segment_duration, split it
-        if duration > max_segment_duration:
-            num_subsegments = max(2, int(duration / max_segment_duration))
-            subsegment_duration = duration / num_subsegments
+        # Always split segments to create more visuals, especially for longer segments
+        # For very short segments (< 3s), keep them intact
+        if duration < 3.0:
+            subdivided_segments.append(segment)
+            continue
             
-            for i in range(num_subsegments):
-                sub_start = start_time_sec + (i * subsegment_duration)
-                sub_end = sub_start + subsegment_duration
-                
-                # Create a subsegment with the same text but add subsegment info
-                segment_text = segment.get("text", default_text)
-                # Add subsegment context to make each prompt slightly different
-                subsegment_text = f"{segment_text} (part {i+1} of {num_subsegments})"
-                
-                subsegment = {
-                    "segment_id": f"{segment.get('segment_id', 0)}_sub{i}",
-                    "segment_type": segment.get("segment_type", "verse"),
-                    "start_time": _seconds_to_timestamp(sub_start),
-                    "end_time": _seconds_to_timestamp(sub_end),
-                    "text": subsegment_text,
-                    "image_url": ""
-                }
-                subdivided_segments.append(subsegment)
+        # Otherwise, create multiple subsegments
+        # More aggressive subdivision for longer segments
+        num_subsegments = max(2, int(duration / max_segment_duration))
+        
+        # For longer segments, create even more subsegments
+        if duration > 15.0:
+            num_subsegments = max(num_subsegments, 3)
+            
+        subsegment_duration = duration / num_subsegments
+        
+        for i in range(num_subsegments):
+            sub_start = start_time_sec + (i * subsegment_duration)
+            sub_end = sub_start + subsegment_duration
+            
+            # Create a subsegment with the same text but add subsegment info
+            segment_text = segment.get("text", default_text)
+            # Add subsegment context to make each prompt slightly different
+            subsegment_text = f"{segment_text} (part {i+1} of {num_subsegments})"
+            
+            subsegment = {
+                "segment_id": f"{segment.get('segment_id', 0)}_sub{i}",
+                "segment_type": segment.get("segment_type", "verse"),
+                "start_time": _seconds_to_timestamp(sub_start),
+                "end_time": _seconds_to_timestamp(sub_end),
+                "text": subsegment_text,
+                "image_url": ""
+            }
+            subdivided_segments.append(subsegment)
         else:
             # Keep short segments as-is
             subdivided_segments.append(segment)
@@ -708,19 +800,21 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
 
 def _timestamp_to_seconds(timestamp):
     """Convert a timestamp in format HH:MM:SS or MM:SS to seconds."""
-    if not timestamp:
+    if not timestamp or not isinstance(timestamp, str):
         return 0
-        
-    parts = timestamp.split(":")
-    if len(parts) == 3:  # HH:MM:SS
-        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
-    elif len(parts) == 2:  # MM:SS
-        return int(parts[0]) * 60 + float(parts[1])
-    else:  # Try to parse as a float
-        try:
+    
+    # Handle non-standard timestamp formats
+    try:
+        parts = timestamp.split(":")
+        if len(parts) == 3:  # HH:MM:SS
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        elif len(parts) == 2:  # MM:SS
+            return int(parts[0]) * 60 + float(parts[1])
+        else:
+            # Try to convert directly to float
             return float(timestamp)
-        except ValueError:
-            return 0
+    except (ValueError, TypeError):
+        return 0
 
 
 def _seconds_to_timestamp(seconds):
