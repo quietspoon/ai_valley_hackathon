@@ -3,6 +3,7 @@ import streamlit as st
 import time
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
+import tempfile
 from src.agent.react_agent import create_lyrics_visualizer_agent
 from src.utils.file_processor import process_lyrics_file, process_audio_file
 from src.components.visualizer import display_visualization
@@ -35,7 +36,7 @@ def main():
     with st.sidebar:
         st.header("How it works")
         st.markdown("""
-        1. The app automatically uses sample audio and audio files
+        1. Upload your MP3 audio file and TXT lyrics/transcript file
         2. Enter your requirements for visualization
         3. Click 'Generate Visualization'
         """)
@@ -47,16 +48,20 @@ def main():
         st.markdown("""
         This app uses an AI agent to analyze lyrics and audio, 
         then creates visuals that match the mood and meaning of the content.
-        
-        Using samples from the 'sample' directory.
         """)
     
     # Main content area - Vertical layout
     # Input section
     st.header("Input")
     
-    # Display info about sample files
-    st.info("Using sample files from the 'sample' directory")
+    # File upload widgets
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        uploaded_audio = st.file_uploader("Upload MP3 Audio File", type=["mp3"])
+    
+    with col2:
+        uploaded_lyrics = st.file_uploader("Upload Lyrics/Transcript Text File", type=["txt", "srt", "lrc"])
     
     # User requirements input
     st.subheader("Visualization Requirements")
@@ -75,27 +80,35 @@ def main():
         
     # Process when generate button is clicked
     if generate_button:
+        # Check if files are uploaded
+        if not uploaded_audio or not uploaded_lyrics:
+            st.error("Please upload both an MP3 audio file and a lyrics/transcript text file.")
+            return
+            
         try:
-            with st.spinner("Processing files and generating visualization..."):
-                # Define paths to sample files using glob to handle special characters
-                import glob
-                sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
-                
-                # Find the transcript file (first .txt file)
-                txt_files = glob.glob(os.path.join(sample_dir, "*.txt"))
-                lyrics_path = txt_files[0] if txt_files else None
-                
-                # Find the audio file (first .mp3 file)
-                mp3_files = glob.glob(os.path.join(sample_dir, "*.mp3"))
-                audio_path = mp3_files[0] if mp3_files else None
+            with st.spinner("Processing uploaded files and generating visualization..."):
+                # Save uploaded files to temporary files
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_audio:
+                    tmp_audio.write(uploaded_audio.getvalue())
+                    audio_path = tmp_audio.name
+                    
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp_lyrics:
+                    tmp_lyrics.write(uploaded_lyrics.getvalue())
+                    lyrics_path = tmp_lyrics.name
                 
                 # Process lyrics and audio
                 try:
                     # Process the files and store in session state for reuse
                     st.session_state.lyrics_data = process_lyrics_file(lyrics_path)
                     st.session_state.audio_data = process_audio_file(audio_path)
-                except FileNotFoundError as e:
-                    st.warning(f"Sample files not found: {str(e)}. Using minimal default data.")
+                    
+                    # Clean up temporary files
+                    os.unlink(lyrics_path)
+                    
+                    # Keep audio file for later use in video creation
+                    # Will be deleted after video creation
+                except Exception as e:
+                    st.error(f"Error processing files: {str(e)}")
                     # Create valid minimal data structures to prevent validation errors
                     st.session_state.lyrics_data = [
                         {"timestamp": "00:00:05", "text": "First line of lyrics"}, 
@@ -186,12 +199,7 @@ def main():
                 st.subheader("Step 2: Creating Video")
                 with st.spinner("Creating video from visualization and audio..."): 
                     try:
-                        # Get the path to the sample audio file using glob to handle special characters
-                        import glob
-                        sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
-                        mp3_files = glob.glob(os.path.join(sample_dir, "*.mp3"))
-                        audio_path = mp3_files[0] if mp3_files else None
-                        
+                        # Use the temporary audio file path we saved earlier
                         # Check if audio file exists
                         if not os.path.exists(audio_path):
                             st.warning(f"Audio file not found at: {audio_path}")
@@ -218,12 +226,14 @@ def main():
                         
                     except Exception as e:
                         st.error(f"Error creating video: {str(e)}")
-                        st.info(
-                            "Troubleshooting tips:\n" 
-                            "1. Make sure moviepy is correctly installed\n"
-                            "2. Check if the audio file exists and is readable\n"
-                            "3. Verify that the visualization data has the correct format"
-                        )
+                        st.error("Video creation failed. Try again with a different input or requirements.")
+                    finally:
+                        # Clean up temporary audio file
+                        try:
+                            if os.path.exists(audio_path):
+                                os.unlink(audio_path)
+                        except Exception as e:
+                            st.warning(f"Could not delete temporary audio file: {str(e)}")
                 
         except Exception as e:
             error_msg = str(e)

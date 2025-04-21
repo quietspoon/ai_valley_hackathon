@@ -583,7 +583,7 @@ def finalize_visualization(timeline: Dict[str, Any] = None) -> Dict[str, Any]:
     # Split long segments into smaller pieces to ensure more frequent image generation
     # Especially important for podcasts with fewer transcript entries
     subdivided_segments = []
-    max_segment_duration = 15  # Maximum segment duration in seconds before subdivision
+    max_segment_duration = 10  # Maximum segment duration in seconds before subdivision
     
     # First, ensure all segments have text content
     has_content = False
